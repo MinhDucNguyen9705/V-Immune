@@ -89,7 +89,7 @@ def train_adapter(model: SpectrumLM, params: list[nn.Parameter], syn: list[Track
 
 def new_centroid(model: SpectrumLM, syn: list[Track], cfg: Config) -> np.ndarray:
     h, _, lab = embed_windows(model, syn, cfg.lm.ctx, cfg.openset.score_len, stride=cfg.lm.ctx)
-    return centroids(h, lab, [lab[0]])[0]
+    return centroids(h, lab, [str(lab[0])])[0]
 
 
 # ------------------------------------------------------------------------------------------- adapter file
