@@ -51,7 +51,12 @@ class IQSource:
 
     @property
     def raw(self) -> np.memmap:
-        return open_iq(self.data_path, self.fmt)
+        if getattr(self, "_raw", None) is None:
+            self._raw = open_iq(self.data_path, self.fmt)
+        return self._raw
+
+    def __getstate__(self) -> dict[str, Any]:  # memmaps are reopened in worker processes
+        return {k: v for k, v in self.__dict__.items() if k != "_raw"}
 
     @property
     def n_samples(self) -> int:

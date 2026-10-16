@@ -40,3 +40,10 @@ def awgn(n: int, rng: np.random.Generator, power: float = 1.0) -> np.ndarray:
 def amplitude_for_snr(snr_db: float, bw_hz: float, fs: float) -> float:
     """Signal amplitude giving in-band SNR ``snr_db`` against unit-power full-band noise."""
     return float(np.sqrt(10 ** (snr_db / 10) * min(bw_hz / fs, 1.0)))
+
+
+def band_gain_db(h: np.ndarray, fs: float, f_off: float, bw: float, n: int = 16) -> float:
+    """Mean power gain (dB) of channel ``h`` over [f_off - bw/2, f_off + bw/2]."""
+    f = f_off + np.linspace(-bw / 2, bw / 2, n)
+    H = np.exp(-2j * np.pi * np.outer(f / fs, np.arange(len(h)))) @ h
+    return float(10 * np.log10(np.mean(np.abs(H) ** 2) + 1e-12))

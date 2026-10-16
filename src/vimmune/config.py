@@ -76,24 +76,25 @@ class ChannelCfg(_M):
     pathloss_exp: float = 2.2
     taps_min: int = 2
     taps_max: int = 4
-    max_delay_s: float = 0.5e-6
-    tap_decay: float = 0.5
+    max_delay_s: float = 0.3e-6
+    tap_decay: float = 0.2  # LOS-dominant (Rician-like) echoes
 
 
 class NoiseModelCfg(_M):
     """Fast-BDW measurement-noise model (spec §4.5). sigma = a + b / sqrt(snr_lin)."""
 
-    toa_a_s: float = 2e-6
-    toa_b_s: float = 4e-6
-    pw_rel_a: float = 0.01
-    pw_rel_b: float = 0.05
-    bw_rel_a: float = 0.03
-    bw_rel_b: float = 0.15
-    fc_frac_a: float = 0.003
-    fc_frac_b: float = 0.02
-    snr_err_db: float = 1.0
-    miss_snr50_db: float = -4.0
-    miss_slope_db: float = 1.0
+    # values measured from the reference detector on simulated scenes (see detect.metrics / DECISIONS)
+    toa_a_s: float = 0.3e-6
+    toa_b_s: float = 5.0e-6
+    pw_rel_a: float = 0.002
+    pw_rel_b: float = 0.02
+    bw_rel_a: float = 0.02
+    bw_rel_b: float = 0.13
+    fc_frac_a: float = 0.025
+    fc_frac_b: float = 0.01
+    snr_err_db: float = 0.6
+    miss_snr50_db: float = -4.2
+    miss_slope_db: float = 1.7
     split_prob: float = 0.005
     merge_prob: float = 0.01
 
@@ -122,14 +123,16 @@ class DetectCfg(_M):
     nfft: int = 1024
     hop: int = 256
     noise_window_s: float = 0.2
-    noise_quantile: float = 0.1  # spec: median; see DECISIONS (duty cycles up to 80%)
-    smooth: tuple[int, int] = (4, 4)  # (frames, bins) averaging before CFAR
-    cfar_guard: tuple[int, int] = (2, 2)
-    cfar_train: tuple[int, int] = (8, 8)
+    noise_quantile: float = 0.02  # spec: median; see DECISIONS (union duty cycles approach 90%)
+    noise_cap_db: float = 1.0  # per-bin floor capped at this much above the quiet (10th pct) bins
+    pool: tuple[int, int] = (2, 2)  # (frames, bins) non-overlapping mean before CFAR
+    smooth: tuple[int, int] = (12, 8)  # total (frames, bins) averaging before CFAR, incl. pooling
+    cfar_guard: tuple[int, int] = (2, 2)  # pooled cells
+    cfar_train: tuple[int, int] = (6, 6)  # pooled cells
     pfa: float = 1e-4
-    closing: tuple[int, int] = (3, 3)
-    min_frames: int = 3
-    min_bins: int = 4
+    closing: tuple[int, int] = (3, 7)  # pooled cells (bridges OFDM DC nulls)
+    min_frames: int = 8
+    min_bins: int = 8
     bw_db: float = -10.0
     iq_bw_factor: float = 1.2
     iq_max_len: int = 2048

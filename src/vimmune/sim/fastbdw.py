@@ -93,6 +93,7 @@ def make_snippet(row: pd.Series, cfg: Config, scene_seed: int, snippet_len: int,
     fs_gen = max(fs, 1.25 * f.bw_hz)  # generate wide enough for the true signal, then filter
     x = synth(f.modulation, int(np.ceil(n * fs_gen / fs)) + 16, fs_gen, f.bw_hz, rng, **wave_kwargs(f, protos))
     x = chan.apply_multipath(x, chan.multipath_taps(rng, fs_gen, cfg.sim.channel))
+    x /= np.sqrt(np.mean(np.abs(x) ** 2) + 1e-20)  # distortion only: the gain is already in the truth SNR
     x *= np.exp(2j * np.pi * (row.fc_off_hz_true - row.fc_off_hz) * np.arange(len(x)) / fs_gen).astype(np.complex64)
     if fs_gen != fs:
         from vimmune.dsp import resample

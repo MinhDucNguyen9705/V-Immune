@@ -44,5 +44,20 @@ def sim_scene(scene: Path, profile: str = "demo", out: Path = Path("runs/scene1"
     console.print(f"[green]{len(truth)} truth bursts[/] -> {out}")
 
 
+@app.command("detect")
+def detect(iq: Path, out: Path = Path("runs/scene1/bdw.parquet"), profile: str = "demo", truth: Path | None = None) -> None:
+    """Reference detector (STFT + CA-CFAR) on a SigMF recording -> BDW parquet + burst store."""
+    from vimmune.detect.detector import ReferenceDetector, label_from_truth
+    from vimmune.io.bdw import read_bdw, write_bdw
+    from vimmune.io.iq import BurstStore, read_sigmf
+
+    cfg = _cfg(profile)
+    df = ReferenceDetector(cfg.detect).detect(read_sigmf(iq), BurstStore(out.parent / "bursts"))
+    if truth is not None:
+        df = label_from_truth(df, read_bdw(truth))
+    write_bdw(df, out)
+    console.print(f"[green]{len(df)} bursts[/] -> {out}")
+
+
 if __name__ == "__main__":
     app()

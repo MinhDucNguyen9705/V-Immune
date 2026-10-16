@@ -73,8 +73,11 @@ def build_truth(scene: SceneCfg, cfg: Config) -> pd.DataFrame:
         sid = e.source_id or f"{scene.name}.e{i}.{e.family}"
         df = schedule(f, protos, e.start_s, e.stop_s or scene.duration_s, rng, sid, scene.center_freq, e.channel, bg)
         base_snr = chan.snr_from_distance(e.distance_m, cfg.sim.channel)
-        df["snr_db"] = base_snr + rng.normal(0, 0.5, len(df))  # small per-burst fading
+        h = emitter_taps(scene, i, cfg)
+        gain = [chan.band_gain_db(h, scene.fs, fo, bw) for fo, bw in zip(df.fc_off_hz, df.bw_hz)]
+        df["snr_db"] = base_snr + np.asarray(gain) + rng.normal(0, 0.5, len(df))  # multipath gain + small fading
         df["distance_m"] = e.distance_m
+        df["mp_gain_db"] = np.asarray(gain)
         df["src_idx"] = i
         df["k"] = np.arange(len(df))
         parts.append(df)
@@ -96,32 +99,40 @@ def truth_bdw(scene: SceneCfg, truth: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def emitter_taps(scene: SceneCfg, src_idx: int, cfg: Config) -> np.ndarray:
+    """Static multipath channel of one emitter (applied at its RF offset, so hop channels fade differently)."""
+    return chan.multipath_taps(np.random.default_rng([scene.seed % 2**32, src_idx, 10**6]), scene.fs, cfg.sim.channel)
+
+
 def render_burst(f: Family, protos: ProtocolsCfg, row: pd.Series, fs: float, scene_seed: int,
                  cfg: Config) -> np.ndarray:
-    """Waveform of one burst at band rate ``fs`` (amplitude for its in-band SNR, multipath, 1 µs ramps)."""
+    """Baseband waveform of one burst at band rate ``fs`` with 1 µs ramps.
+
+    The amplitude gives the burst's in-band SNR *before* the multipath gain, which the truth SNR already
+    contains (the caller shifts to the RF offset and then applies the emitter's taps).
+    """
     n = max(1, int(round(row.pw_s * fs)))
     rng = burst_rng(scene_seed, int(row.src_idx), int(row.k))
     x = synth(f.modulation, n, fs, f.bw_hz, rng, **wave_kwargs(f, protos))
-    h = chan.multipath_taps(np.random.default_rng([scene_seed % 2**32, int(row.src_idx), 10**6]), fs, cfg.sim.channel)
-    x = chan.apply_multipath(x, h)
     r = min(n // 2, max(1, int(1e-6 * fs)))
     ramp = 0.5 - 0.5 * np.cos(np.pi * np.arange(r) / r)
     x[:r] *= ramp
     x[n - r :] *= ramp[::-1]
-    return x * chan.amplitude_for_snr(row.snr_db, f.bw_hz, fs)
+    return x * chan.amplitude_for_snr(row.snr_db - row.mp_gain_db, f.bw_hz, fs)
 
 
 def _render_chunk(args: tuple) -> None:
-    path, c0, n, bursts, scene_seed, fs, cfg, scale = args
+    path, c0, n, bursts, scene, fs, cfg, scale = args
     protos = cfg.protos
-    rng = np.random.default_rng([scene_seed % 2**32, 77, c0])
+    rng = np.random.default_rng([scene.seed % 2**32, 77, c0])
     y = chan.awgn(n, rng)
     for _, row in bursts.iterrows():
         f = protos.get(row.protocol)
-        x = render_burst(f, protos, row, fs, scene_seed, cfg)
+        x = render_burst(f, protos, row, fs, scene.seed, cfg)
         s0 = int(round(row.toa_s * fs))
         t = (s0 + np.arange(len(x))) / fs
-        x = x * np.exp(2j * np.pi * row.fc_off_hz * t).astype(np.complex64)
+        x = chan.apply_multipath(x * np.exp(2j * np.pi * row.fc_off_hz * t).astype(np.complex64),
+                                 emitter_taps(scene, int(row.src_idx), cfg))
         a, b = max(s0, c0), min(s0 + len(x), c0 + n)
         if b > a:
             y[a - c0 : b - c0] += x[a - s0 : b - s0]
@@ -144,7 +155,7 @@ def render_iq(scene: SceneCfg, truth: pd.DataFrame, cfg: Config, out_dir: Path, 
         n = min(csz, N - c0)
         t0, t1 = c0 / fs, (c0 + n) / fs
         sel = truth[(truth.toa_s < t1) & (truth.tod_s > t0)]
-        jobs.append((data, c0, n, sel, scene.seed, fs, cfg, cfg.sim.iq_scale))
+        jobs.append((data, c0, n, sel, scene, fs, cfg, cfg.sim.iq_scale))
     with ProcessPoolExecutor(workers) as ex:
         list(ex.map(_render_chunk, jobs))
     write_sigmf_meta(out_dir / "iq.sigmf-meta", "ci16_le", fs, scene.center_freq, cfg.sim.iq_scale,
