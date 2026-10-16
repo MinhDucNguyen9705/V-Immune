@@ -179,7 +179,8 @@ class AssocCfg(_M):
     sdif_max_order: int = 3
     sdif_tol: float = 0.02
     sdif_min_train: int = 8
-    sdif_max_missing: int = 2
+    sdif_max_missing: int = 8
+    sdif_min_fill: float = 0.5  # pulses / period slots spanned by a train
     min_track_bursts: int = 32
     max_missed_windows: int = 2
     match_max_cost: float = 1.5

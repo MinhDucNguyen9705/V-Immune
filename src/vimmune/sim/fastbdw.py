@@ -26,7 +26,8 @@ def resolve_collisions(truth: pd.DataFrame) -> pd.DataFrame:
     """Bursts overlapping in time *and* frequency become one blob, as connected components would.
 
     The weaker burst disappears; if it is within 10 dB of the stronger one the survivor's extent becomes
-    the union bounding box. Adds column ``merged``.
+    the union bounding box and the label is that of the larger-area burst (as ``label_from_truth`` does for
+    the real detector). Adds column ``merged``.
     """
     df = truth.sort_values("toa_s").reset_index(drop=True).copy()
     df["merged"] = False
@@ -42,8 +43,11 @@ def resolve_collisions(truth: pd.DataFrame) -> pd.DataFrame:
             if not (alive[i] and alive[j]) or tod[j] <= toa[i] or hi[j] <= lo[i] or lo[j] >= hi[i]:
                 continue
             s, w = (i, j) if snr[i] >= snr[j] else (j, i)
+            if abs(snr[s] - snr[w]) < 10:  # union blob: labelled like the detector, by the larger t-f area
+                area = lambda k: (tod[k] - toa[k]) * (hi[k] - lo[k])  # noqa: E731
+                s, w = (s, w) if area(s) >= area(w) else (w, s)
             alive[w] = False
-            if snr[s] - snr[w] < 10:
+            if abs(snr[s] - snr[w]) < 10:
                 toa[s], tod[s] = min(toa[s], toa[w]), max(tod[s], tod[w])
                 lo[s], hi[s] = min(lo[s], lo[w]), max(hi[s], hi[w])
                 df.loc[s, "merged"] = True

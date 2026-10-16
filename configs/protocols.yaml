@@ -13,14 +13,14 @@ families:
   - {id: P3, name: ctrl-adaptive, kind: control, modulation: gfsk, bw_hz: 1.0e6, pw_s: 0.6e-3, timing: periodic,
      frame_s: 8.0e-3, hop: adaptive, n_channels: 20, channel_spacing_hz: 1.3e6}
   - {id: P4, name: video-10, kind: video, modulation: ofdm, bw_hz: 10.0e6, pw_s: 2.0e-3, timing: periodic,
-     frame_s: 2.5e-3, hop: retune, n_channels: 3, channel_centers_hz: [-9.0e6, 0.0, 9.0e6], retune_s: 2.0,
+     frame_s: 2.5e-3, hop: retune, n_channels: 3, channel_centers_hz: [-10.0e6, 0.0, 10.0e6], retune_s: 2.0,
      ofdm_scs_hz: 15.0e3}
   - {id: P5, name: video-20, kind: video, modulation: ofdm, bw_hz: 20.0e6, pw_s: 1.5e-3, timing: periodic,
      frame_s: 2.0e-3, hop: fixed, n_channels: 3, channel_centers_hz: [-4.0e6, 0.0, 4.0e6], ofdm_scs_hz: 30.0e3}
   - {id: P6, name: telem-pair, kind: telemetry, modulation: gfsk, bw_hz: 0.5e6, pw_s: 0.3e-3, timing: pair,
      frame_s: 12.0e-3, hop: fixed, n_channels: 12, channel_spacing_hz: 2.0e6, pair_delay_s: 1.2e-3}
   - {id: P7, name: wifi-like, kind: background, modulation: ofdm, bw_hz: 20.0e6, pw_range_s: [0.1e-3, 2.0e-3],
-     timing: csma, hop: fixed, n_channels: 3, channel_centers_hz: [-5.0e6, 0.0, 5.0e6], csma_mean_gap_s: 2.0e-3,
+     timing: csma, hop: fixed, n_channels: 3, channel_centers_hz: [-5.0e6, 0.0, 5.0e6], csma_mean_gap_s: 4.0e-3,
      ofdm_scs_hz: 312.5e3, ofdm_cp: 0.25}
   - {id: P8, name: ble-like, kind: background, modulation: gfsk, bw_hz: 1.0e6, pw_s: 0.2e-3, timing: advertising,
      hop: adv, n_channels: 3, channel_centers_hz: [-12.0e6, -2.0e6, 11.0e6], adv_interval_s: 0.1, adv_rand_s: 0.01}
