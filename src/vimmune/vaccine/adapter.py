@@ -59,8 +59,13 @@ def adapted_model(base: SpectrumLM, r: int, n_new: int = 1) -> tuple[SpectrumLM,
 
 
 def train_adapter(model: SpectrumLM, params: list[nn.Parameter], syn: list[Track], replay: list[Track], classes: list[str],
-                  cfg: Config, seed: int, steps: int | None = None, log=None) -> list[float]:
-    """50/50 synthetic-new / replayed-known batches; LM + CE loss; only LoRA + head train."""
+                  cfg: Config, seed: int, steps: int | None = None, log=None, base: SpectrumLM | None = None) -> list[float]:
+    """50/50 synthetic-new / replayed-known batches; LM + CE loss; only LoRA + head train.
+
+    If ``base`` is given, a KL(base ‖ adapted) term on the field heads and a cosine term on the pooled hidden
+    state of the replayed half keep the known classes' surprise and embedding distributions (hence their
+    calibration) unchanged (learning-without-forgetting / feature distillation).
+    """
     v = cfg.vaccine
     rng = np.random.default_rng(seed)
     torch.manual_seed(seed)
@@ -76,6 +81,15 @@ def train_adapter(model: SpectrumLM, params: list[nn.Parameter], syn: list[Track
         logits, h = model(b["inp"], b["t"], b["valid"], b["tgt"])
         ce = F.cross_entropy(model.classify(h, b["valid"]), b["label"])
         loss = lm_loss(logits, b["tgt"]) + ce
+        if base is not None and v.adapter_kd_weight > 0:
+            with torch.no_grad():
+                bl, bh = base(br["inp"], br["t"], br["valid"], br["tgt"])
+            m = br["valid"].float()[..., None]
+            ha, hb = model.pool(h[half:], br["valid"]), model.pool(bh, br["valid"])
+            loss = loss + v.adapter_feat_weight * (1 - F.cosine_similarity(ha, hb, dim=-1)).mean()
+            kd = sum((F.kl_div(F.log_softmax(a[half:], -1), F.log_softmax(t, -1), log_target=True, reduction="none").sum(-1, keepdim=True) * m).sum() / m.sum()
+                     for a, t in zip(logits, bl))
+            loss = loss + v.adapter_kd_weight * kd
         opt.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(params, cfg.lm.grad_clip)
@@ -132,7 +146,8 @@ def evaluate_gate(base_sc, ad_sc, heldout: list[Track], known_test: list[Track],
     recall = float(((~ho.unknown) & (ho.pred == new_name)).mean()) if len(ho) else 0.0
     kb, ka = base_sc.score(known_test), ad_sc.score(known_test)
     acc_b, acc_a = window_accuracy(kb), window_accuracy(ka)
-    bb, ba = base_sc.score(background), ad_sc.score(background)
+    st = max(1, base_sc.cal.score_len // 2)  # half-overlapping windows: more background evidence
+    bb, ba = base_sc.score(background, stride=st), ad_sc.score(background, stride=st)
     fa_b = float((bb.unknown | (bb.pred == new_name)).mean()) if len(bb) else 0.0
     fa_a = float((ba.unknown | (ba.pred == new_name)).mean()) if len(ba) else 0.0
     checks = {

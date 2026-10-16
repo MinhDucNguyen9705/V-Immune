@@ -16,6 +16,7 @@ import pandas as pd
 from vimmune.config import Config, seed_everything
 from vimmune.grammar.card import Card
 from vimmune.lm.data import Track, build_tracks
+from vimmune.lm.train import centroids, embed_windows
 from vimmune.pipeline import _log, corpus_tracks, fit_calibration, load_lm, read_json, write_json
 from vimmune.tokenize.fields import Tokenizer
 from vimmune.tokenize.vq import encode_waves, load_vq, prep_bursts, to_tensor
@@ -134,10 +135,12 @@ def run_vaccine(cfg: Config, *, track: pd.DataFrame, store: Path, card: Card, ba
     replay = [t for t in corp["train"] if t.label in bundle.classes]
     model, params = adapted_model(base, v.lora_rank)
     t0 = time.time()
-    hist = train_adapter(model, params, syn_tracks, replay, classes, cfg, seed, steps, log=_log)
+    hist = train_adapter(model, params, syn_tracks, replay, classes, cfg, seed, steps, log=_log, base=base)
     t_adapter = time.time() - t0
+    # all centroids under the adapted model: the LoRA shifts h for known classes too
+    h_k, _, lab_k = embed_windows(model, replay, cfg.lm.ctx, cfg.openset.score_len, stride=cfg.lm.ctx)
     mu_new = new_centroid(model, syn_tracks, cfg)
-    mu_ext = np.concatenate([bundle.centroids, mu_new[None]])
+    mu_ext = np.concatenate([centroids(h_k, lab_k, bundle.classes), mu_new[None]])
 
     # 6. recalibrate with the adapted model (α, κ, h fixed); 7. gate on real data only
     base_cal = OpenSetCalib.from_dict(read_json(base_calib))
@@ -145,7 +148,8 @@ def run_vaccine(cfg: Config, *, track: pd.DataFrame, store: Path, card: Card, ba
     base_sc = OpenSetScorer(base, bundle.classes, bundle.centroids, base_cal)
     ad_sc = OpenSetScorer(model, classes, mu_ext, cal_ad)
     known_test = [t for t in corp["test"] if t.label in bundle.classes]
-    background = [t for t in known_test if cfg.protos.get(t.label).kind == "background"]
+    # background-only data: val + test background tracks (val is only used to pick α, never for training)
+    background = [t for t in corp["val"] + corp["test"] if t.label in bundle.classes and cfg.protos.get(t.label).kind == "background"]
     gate = evaluate_gate(base_sc, ad_sc, held_tracks, known_test, background, new_name, v.gate, approve)
 
     meta = {"rank": v.lora_rank, "n_new": 1, "base_lm": str(base_lm), "classes": classes, "k": int(len(learn_k)),
@@ -155,7 +159,7 @@ def run_vaccine(cfg: Config, *, track: pd.DataFrame, store: Path, card: Card, ba
     np.save(out / "mu_ext.npy", mu_ext)
     (out / "card.json").write_text(card.model_dump_json(indent=1))
     np.savez_compressed(out / "samples.npz", real=W_learn[:16], synthetic=pool[:16], augmented=aug[:16])
-    seqs.to_parquet(out / "synthetic_sequences.parquet")
+    seqs.assign(wcode=codes_syn).to_parquet(out / "synthetic_sequences.parquet")
     report = {"new_class": new_name, "k_requested": k, "k_used": int(len(learn_k)), "n_learn_bursts": len(learn),
               "n_heldout_bursts": len(held), "waveforms": winfo, "n_synthetic_sequences": len(syn_tracks),
               "n_synthetic_bursts": int(len(seqs)), "adapter_kb": size / 1024, "adapter_train_s": t_adapter,

@@ -283,3 +283,139 @@ def stage_ddpm(cfg: Config, corpus: Path, tok_dir: Path, out: Path, workers: int
          "loss_last": float(np.mean(hist[-20:])), "params": sum(p.numel() for p in model.parameters())}
     write_json(out / "metrics.json", m)
     return m
+
+
+# ------------------------------------------------------------------------------------------- edge (§2.8)
+def synthetic_tracks(cfg: Config, vaccine_dir: Path) -> list[Track]:
+    seqs = pd.read_parquet(vaccine_dir / "synthetic_sequences.parquet")
+    return build_tracks(seqs, seqs.wcode.to_numpy(), Tokenizer(cfg))
+
+
+def _eval_scorer(sc, known: list[Track], unk: list[Track]) -> dict:
+    from vimmune.openset.calib import auroc, tpr_at_fpr
+
+    k, u = sc.score(known), sc.score(unk)
+    return {"accuracy": float((k.pred == k.label).mean()), "auroc": auroc(k.U.to_numpy(), u.U.to_numpy()),
+            "tpr_at_fpr5": tpr_at_fpr(k.U.to_numpy(), u.U.to_numpy())}
+
+
+def _eval_onnx(lm, calib, classes, mu, known: list[Track], unk: list[Track], cfg: Config) -> dict:
+    from vimmune.edge.runtime import onnx_decide
+    from vimmune.lm.data import scoring_windows
+    from vimmune.openset.calib import auroc, tpr_at_fpr
+
+    def run(ts):
+        out = []
+        for t in ts:
+            for s, e in scoring_windows(t, cfg.lm.ctx, cfg.openset.score_len):
+                out.append((t.label, onnx_decide(lm, t.slice(s, e), calib, classes, mu)))
+        return out
+
+    k, u = run(known), run(unk)
+    Uk, Uu = np.array([d["U"] for _, d in k]), np.array([d["U"] for _, d in u])
+    return {"accuracy": float(np.mean([d["pred"] == lab for lab, d in k])), "auroc": auroc(Uk, Uu), "tpr_at_fpr5": tpr_at_fpr(Uk, Uu)}
+
+
+def stage_edge(cfg: Config, corpus: Path, tok_dir: Path, lm_path: Path, vaccine_dir: Path, out: Path,
+               scene_meta: Path | None = None, bench_s: float | None = 2.0) -> dict:
+    """Distil teacher(+adapter) -> student, export ONNX fp32 + INT8, compare, benchmark, run the async edge pipeline."""
+    from vimmune.edge.distill import (
+        OnnxLM,
+        distill,
+        export_onnx,
+        quantize_int8,
+        tensorrt_available,
+        window_feed,
+    )
+    from vimmune.edge.runtime import bench_lm, run_edge_bench
+    from vimmune.openset.calib import OpenSetCalib
+    from vimmune.openset.scorer import OpenSetScorer, pseudo_unknowns
+    from vimmune.tokenize.vq import load_vq
+    from vimmune.vaccine.adapter import load_adapter
+
+    out.mkdir(parents=True, exist_ok=True)
+    seed_everything(cfg.seed)
+    base, bundle = load_lm(lm_path)
+    teacher, obj = load_adapter(base, vaccine_dir / "adapter.pt")
+    classes = obj["meta"]["classes"]
+    new = classes[-1]
+    t_cal = OpenSetCalib.from_dict(read_json(vaccine_dir / "calib_adapted.json"))
+    mu_t = np.load(vaccine_dir / "mu_ext.npy")
+    tr = corpus_tracks(cfg, corpus, tok_dir)
+    syn = synthetic_tracks(cfg, vaccine_dir)
+    train = [t for t in tr["train"] if t.label in classes] + syn
+    t0 = time.time()
+    student, hist = distill(teacher, train, classes, cfg, cfg.seed, log=_log)
+    t_dist = time.time() - t0
+    h, _, lab = embed_windows(student, [t for t in tr["train"] if t.label in classes] + syn, cfg.lm.ctx, cfg.openset.score_len, stride=cfg.lm.ctx)
+    mu_s = centroids(h, lab, classes)
+    s_cal, _ = fit_calibration(cfg, student, classes, mu_s, tr, fixed=t_cal, extra_class=(new, syn))
+    known = [t for t in tr["test"] if t.label in bundle.classes]
+    unk = pseudo_unknowns(known, 40, cfg.seed + 7)
+    res = {"teacher": _eval_scorer(OpenSetScorer(teacher, classes, mu_t, t_cal), known, unk),
+           "student_torch": _eval_scorer(OpenSetScorer(student, classes, mu_s, s_cal), known, unk)}
+    export_onnx(student, out / "student_fp32.onnx", cfg.lm.ctx)
+    feeds = window_feed(train[:: max(1, len(train) // 200)], cfg.lm.ctx, cfg.openset.score_len, cfg.edge.calib_sequences)
+    quantize_int8(out / "student_fp32.onnx", out / "student_int8.onnx", feeds)
+    lm32, lm8 = OnnxLM(out / "student_fp32.onnx"), OnnxLM(out / "student_int8.onnx")
+    res["student_onnx_fp32"] = _eval_onnx(lm32, s_cal, classes, mu_s, known, unk, cfg)
+    res["student_onnx_int8"] = _eval_onnx(lm8, s_cal, classes, mu_s, known, unk, cfg)
+    bench = {"onnx_fp32": bench_lm(lm32, feeds[:200]), "onnx_int8": bench_lm(lm8, feeds[:200])}
+    import torch as _t
+
+    tt = []
+    for f in feeds[:100]:
+        b = {k: _t.from_numpy(v) for k, v in f.items() if not k.startswith("_")}
+        t1 = time.perf_counter()
+        with _t.no_grad():
+            teacher(b["inp"], b["t"])
+        tt.append(time.perf_counter() - t1)
+    bench["teacher_torch"] = {"latency_mean_ms": 1e3 * float(np.mean(tt)), "latency_p99_ms": 1e3 * float(np.percentile(tt, 99))}
+    pipeline_bench = None
+    if scene_meta is not None:
+        pipeline_bench = run_edge_bench(scene_meta, cfg, load_vq(tok_dir / "vq.pt", cfg.tokenizer), lm8, s_cal, classes, mu_s, bench_s)
+        pd.DataFrame(pipeline_bench.pop("decisions")).to_parquet(out / "edge_decisions.parquet")
+    _t.save({"state": student.state_dict(), "cfg": student.cfg.model_dump(), "classes": classes}, out / "student.pt")
+    write_json(out / "calib_student.json", s_cal.to_dict())
+    np.save(out / "mu_student.npy", mu_s)
+    rep = {"student_params": n_params(student), "teacher_params": n_params(teacher), "distill_s": t_dist,
+           "distill_loss_first": float(np.mean(hist[:10])), "distill_loss_last": float(np.mean(hist[-10:])),
+           "metrics": res, "drop_vs_teacher": {k: {m: res["teacher"][m] - v[m] for m in v} for k, v in res.items() if k != "teacher"},
+           "size_bytes": {"fp32": (out / "student_fp32.onnx").stat().st_size, "int8": (out / "student_int8.onnx").stat().st_size},
+           "calib_sequences": len(feeds), "tensorrt": "available" if tensorrt_available() else "not installed (skipped)",
+           "bench": bench, "pipeline": pipeline_bench}
+    write_json(out / "edge_report.json", rep)
+    return rep
+
+
+def stage_release(cfg: Config, vaccine_dir: Path, out: Path, version: str = "1.1.0") -> Path:
+    """Sign a .vpkg with the adapter, μ_new, card, calibration tables/conformal scores/CUSUM params."""
+    from vimmune.edge.release import build_release, generate_keys
+
+    out.mkdir(parents=True, exist_ok=True)
+    keys = out / "keys"
+    priv = keys / "release_ed25519.pem"
+    if not priv.exists():
+        generate_keys(keys)
+    mu_ext = np.load(vaccine_dir / "mu_ext.npy")
+    np.save(out / "mu_new.npy", mu_ext[-1])
+    gate = read_json(vaccine_dir / "gate_report.json")
+    if not gate["passed"]:
+        raise RuntimeError("gate not passed (approval missing or a check failed): refusing to build a release")
+    files = {"adapter.pt": vaccine_dir / "adapter.pt", "mu_new.npy": out / "mu_new.npy", "mu_ext.npy": vaccine_dir / "mu_ext.npy",
+             "card.json": vaccine_dir / "card.json", "calib.json": vaccine_dir / "calib_adapted.json",
+             "gate_report.json": vaccine_dir / "gate_report.json"}
+    calib = read_json(vaccine_dir / "calib_adapted.json")
+    pkg = build_release(out / f"vimmune-{version}.vpkg", files, version, priv,
+                        {"cusum": {"kappa": calib["kappa"], "h": calib["h"]}, "epsilon": calib["epsilon"], "alpha": calib["alpha"]})
+    write_json(out / "release.json", {"package": pkg.name, "version": version, "size_bytes": pkg.stat().st_size,
+                                      "public_key": str(keys / "release_ed25519.pub.pem")})
+    return pkg
+
+
+def stage_fleet(cfg: Config, lm_path: Path, calib_path: Path, tok_dir: Path, release: Path, pub: Path, out: Path,
+                new_family: str) -> dict:
+    from vimmune.edge.fleet import run_fleet
+
+    paths = {"lm": str(lm_path), "calib": str(calib_path), "tok": str(tok_dir), "pub": str(pub)}
+    return run_fleet(cfg, paths, release, out, new_family)

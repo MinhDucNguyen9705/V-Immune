@@ -108,38 +108,38 @@ def _period(toa: np.ndarray, p: float | None) -> float:
     return float(np.median(d)) if len(d) else 1.0
 
 
-def associate(df: pd.DataFrame, z: np.ndarray, cfg: AssocCfg, use_sdif: bool = True) -> pd.DataFrame:
-    """Assign ``track_id`` to each burst (sliding 2 s windows, 0.5 s step, Hungarian across windows).
+class Associator:
+    """Stateful tracker over sliding windows (batch: :func:`associate`; streaming: the edge runtime).
 
-    The cost adds a burst-overlap term ``1 - |g ∩ track| / |g ∩ previous window|`` to the spec's
+    The Hungarian cost adds a burst-overlap term ``1 - |g ∩ track| / |g ∩ previous window|`` to the spec's
     cosine + period cost, because co-channel same-family emitters have identical z and period.
     """
-    df = df.reset_index(drop=True)
-    toa, tod = df.toa_s.to_numpy(), df.tod_s.to_numpy()
-    fc, bw, pw = df.fc_hz.to_numpy(), df.bw_hz.to_numpy(), df.pw_s.to_numpy()
-    assign = np.full(len(df), -1, np.int64)
-    tracks: dict[int, Track] = {}
-    next_id = 0
-    if len(df) == 0:
-        return df.assign(track_id=assign)
-    t_start, t_end = toa.min(), toa.max()
-    prev = np.zeros(len(df), bool)
-    w = 0
-    t0 = t_start
-    while True:
-        win = (toa >= t0) & (toa < t0 + cfg.window_s)
-        widx = np.flatnonzero(win)
+
+    def __init__(self, cfg: AssocCfg, use_sdif: bool = True):
+        self.cfg, self.use_sdif = cfg, use_sdif
+        self.tracks: dict[int, Track] = {}
+        self.next_id = 0
+        self.w = 0
+        self.prev: set[int] = set()
+
+    def step(self, toa, tod, fc, bw, pw, z, assign: np.ndarray, t0: float) -> np.ndarray:
+        """Group + split + match the bursts with TOA in [t0, t0 + window); updates ``assign`` in place.
+
+        Returns the indices of bursts that received a track id in this step.
+        """
+        cfg = self.cfg
+        widx = np.flatnonzero((toa >= t0) & (toa < t0 + cfg.window_s))
         groups: list[tuple[np.ndarray, float | None]] = []
         comps = [widx[g] for g in graph_groups(z[widx], bw[widx], pw[widx], cfg)]
         for g in merge_similar_groups(comps, z, bw, pw, cfg):
-            groups += split_group(np.sort(g), toa, tod, fc, bw, cfg, use_sdif)
-        active = [t for t in tracks.values() if w - t.last_win <= cfg.max_missed_windows]
+            groups += split_group(np.sort(g), toa, tod, fc, bw, cfg, self.use_sdif)
+        active = [t for t in self.tracks.values() if self.w - t.last_win <= cfg.max_missed_windows]
         cost = np.full((len(groups), len(active)), 1e6)
         ovm = np.zeros((len(groups), len(active)))
         for i, (g, p) in enumerate(groups):
             zg = _unit(z[g].mean(0))
             pg = _period(toa[g], p)
-            seen = prev[g]
+            seen = np.array([x in self.prev for x in g.tolist()], bool)
             for j, tr in enumerate(active):
                 pt = tr.period or pg
                 ov = (len(set(g[seen].tolist()) & tr.bursts) / seen.sum()) if seen.sum() else 0.0
@@ -156,25 +156,42 @@ def associate(df: pd.DataFrame, z: np.ndarray, cfg: AssocCfg, use_sdif: bool = T
                 j = int(np.argmax(ovm[i]))
                 if cost[i, j] <= cfg.match_max_cost:
                     matched[i] = active[j]
+        newly = []
         for i, (g, p) in enumerate(groups):
             tr = matched.get(i)
             if tr is None:
                 if len(g) < cfg.sdif_min_train:
                     continue
-                tr = Track(next_id, _unit(z[g].mean(0)), p)
-                tracks[next_id] = tr
-                next_id += 1
+                tr = Track(self.next_id, _unit(z[g].mean(0)), p)
+                self.tracks[self.next_id] = tr
+                self.next_id += 1
             new = g[assign[g] < 0]
             assign[new] = tr.tid
+            newly.append(new)
             tr.bursts.update(g.tolist())
             tr.z = _unit(0.7 * tr.z + 0.3 * _unit(z[g].mean(0)))
             tr.period = _period(toa[g], p) if p is not None else tr.period
-            tr.last_win = w
-        prev = win
+            tr.last_win = self.w
+        self.prev = set(widx.tolist())
+        self.w += 1
+        return np.concatenate(newly) if newly else np.zeros(0, int)
+
+
+def associate(df: pd.DataFrame, z: np.ndarray, cfg: AssocCfg, use_sdif: bool = True) -> pd.DataFrame:
+    """Assign ``track_id`` to each burst (sliding 2 s windows, 0.5 s step, Hungarian across windows)."""
+    df = df.reset_index(drop=True)
+    assign = np.full(len(df), -1, np.int64)
+    if len(df) == 0:
+        return df.assign(track_id=assign)
+    toa, tod = df.toa_s.to_numpy(), df.tod_s.to_numpy()
+    fc, bw, pw = df.fc_hz.to_numpy(), df.bw_hz.to_numpy(), df.pw_s.to_numpy()
+    a = Associator(cfg, use_sdif)
+    t0, t_end = toa.min(), toa.max()
+    while True:
+        a.step(toa, tod, fc, bw, pw, z, assign, t0)
         if t0 + cfg.window_s >= t_end:
             break
         t0 += cfg.step_s
-        w += 1
     return df.assign(track_id=assign)
 
 

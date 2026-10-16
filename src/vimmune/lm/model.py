@@ -47,6 +47,8 @@ class LoRALinear(nn.Module):
 
 
 class Attention(nn.Module):
+    export_mode = False  # explicit-mask attention for ONNX export (SDPA's is_causal is not exported faithfully)
+
     def __init__(self, d: int, h: int):
         super().__init__()
         self.h, self.dk = h, d // h
@@ -56,7 +58,12 @@ class Attention(nn.Module):
         B, L, D = x.shape
         q, k, v = (m(x).view(B, L, self.h, self.dk).transpose(1, 2) for m in (self.q, self.k, self.v))
         # sequences are right-padded, so the causal mask alone keeps valid queries off padded keys
-        y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+        if Attention.export_mode:
+            a = (q @ k.transpose(-1, -2)) / math.sqrt(self.dk)
+            a = a.masked_fill(torch.ones(L, L, dtype=torch.bool, device=x.device).triu(1), float("-inf"))
+            y = a.softmax(-1) @ v
+        else:
+            y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
         return self.o(y.transpose(1, 2).reshape(B, L, D))
 
 

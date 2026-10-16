@@ -40,5 +40,6 @@ files = ["src/vimmune"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["tests"]
 addopts = "-q"
 markers = ["slow: longer tests (still CPU-only)"]

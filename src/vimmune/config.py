@@ -281,6 +281,8 @@ class VaccineCfg(_M):
     adapter_steps: int = 2000
     adapter_lr: float = 1e-3
     adapter_batch: int = 32
+    adapter_kd_weight: float = 1.0  # KL(base ‖ adapted) on replayed known data (anti-forgetting)
+    adapter_feat_weight: float = 10.0  # 1 − cos(pooled h_adapted, pooled h_base) on replayed known data
     ddpm: DDPMCfg = DDPMCfg()
     gate: GateCfg = GateCfg()
 
