@@ -174,7 +174,7 @@ def _corpus_job(args: tuple) -> pd.DataFrame:
     store = BurstStore(root, prefix=f"{scene.name}_")
     df = fast_session(scene, cfg, store)
     store.flush()
-    df = df.groupby("source_id", group_keys=False).apply(lambda g: g.head(max_per_source))
+    df = df.groupby("source_id", sort=False).head(max_per_source)
     return df.reset_index(drop=True)
 
 
