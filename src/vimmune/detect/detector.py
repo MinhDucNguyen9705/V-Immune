@@ -142,7 +142,7 @@ def _process_block(args: tuple) -> list[dict]:
     excess = np.maximum(Rb - 1.0, 0.0)
     fbin = fs / nfft
     t_frame = lambda i: (w0 + (f0 + i) * hop + nfft / 2) / fs  # noqa: E731
-    for k, sl in enumerate(ndimage.find_objects(lab)):
+    for sl in ndimage.find_objects(lab):
         if sl is None:
             continue
         ts, fsl = slice(sl[0].start * pt, sl[0].stop * pt), slice(sl[1].start * pf, sl[1].stop * pf)
