@@ -39,7 +39,7 @@ def simulate_and_detect(cfg: Config, scene: SceneCfg, out: Path, tok_dir: Path) 
     t_det = time.time() - t0
     truth_t = truth.assign(fc_hz=scene.center_freq + truth.fc_off_hz)
     lab = label_from_truth(det, truth_t)
-    det = det.assign(truth_protocol=lab.protocol, truth_source=lab.source_id).drop(columns=["protocol", "source_id"])
+    det = det.assign(truth_protocol=lab.protocol, truth_source=lab.source_id)  # display/eval only; protocol stays None
     z, codes = encode_bdw(cfg, det, out / "bursts", tok_dir)
     det["wcode"] = codes
     t0 = time.time()

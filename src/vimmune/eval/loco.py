@@ -337,10 +337,10 @@ def evaluate_demo_fold(cfg: Config, demo: Path, hidden: list[str]) -> dict:
     """Evaluation of the demo's own fold (artifacts already trained by the demo); writes table3.md there."""
     fold = demo / "eval_fold"
     fold.mkdir(parents=True, exist_ok=True)
-    for name in ("corpus", "tok", "lm", "cal"):
+    for name, src in (("corpus", "corpus"), ("tok", "tokenizer"), ("lm", "lm"), ("cal", "calibrate")):
         link = fold / name
         if not link.exists():
-            link.symlink_to((demo / name).resolve())
+            link.symlink_to((demo / src).resolve())
     res = evaluate_fold(cfg, fold, hidden)
     agg = aggregate([res])
     write_json(demo / "results.json", {"profile": cfg.profile, "folds": [res], "aggregate": agg})

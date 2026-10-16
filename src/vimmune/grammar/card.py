@@ -357,8 +357,9 @@ def true_centers(truth: pd.DataFrame, source_id: str, center_freq: float, fam: F
     """Absolute channel centers used by ``source_id`` in the simulator truth."""
     from vimmune.sim.families import channel_centers
 
-    used = sorted(truth[truth.source_id == source_id].channel.unique())
-    return center_freq + channel_centers(fam)[used]
+    cc = channel_centers(fam)
+    used = [c for c in sorted(truth[truth.source_id == source_id].channel.unique()) if c < len(cc)]
+    return center_freq + cc[used]
 
 
 def card_vs_truth(card: Card, fam: Family, centers_true_hz: np.ndarray) -> dict:

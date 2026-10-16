@@ -26,14 +26,25 @@ STAGES = ["corpus", "tokenizer", "lm", "calibrate", "ddpm", "scene1", "cards", "
           "scene2", "eval", "report"]
 DEPS = {"tokenizer": ["corpus"], "lm": ["tokenizer"], "calibrate": ["lm"], "ddpm": ["tokenizer"], "scene1": ["calibrate"],
         "cards": ["scene1"], "vaccine": ["cards", "ddpm"], "edge": ["vaccine"], "release": ["vaccine"], "fleet": ["release"],
-        "scene2": ["release"], "eval": ["calibrate"], "report": ["scene2", "fleet", "edge", "eval"]}
+        "scene2": ["release"], "eval": ["calibrate"], "report": []}  # the report always runs and shows missing parts
 
 
-def code_hash() -> str:
+# source files whose content invalidates each stage (upstream stages are covered through their keys)
+COMMON = ["config.py", "dsp.py", "pipeline.py", "io", "sim", "tokenize/fields.py"]
+STAGE_CODE = {"corpus": [], "tokenizer": ["tokenize"], "lm": ["lm"], "calibrate": ["openset", "lm"], "ddpm": ["vaccine/ddpm.py"],
+              "scene1": ["detect", "associate", "demo/live.py", "openset", "lm/score.py"], "cards": ["grammar", "demo/orchestrator.py"],
+              "vaccine": ["vaccine", "openset"], "edge": ["edge", "detect", "associate"], "release": ["edge/release.py"],
+              "fleet": ["edge", "associate"], "scene2": ["detect", "associate", "demo/live.py", "vaccine/adapter.py"],
+              "eval": ["eval", "openset", "lm/score.py"], "report": []}
+
+
+def code_hash(stage: str | None = None) -> str:
+    base = REPO_ROOT / "src" / "vimmune"
     h = hashlib.sha256()
-    for p in sorted((REPO_ROOT / "src" / "vimmune").rglob("*.py")):
-        if "demo/app.py" not in str(p):
-            h.update(p.read_bytes())
+    parts = COMMON + (STAGE_CODE.get(stage, []) if stage else [""])
+    files = sorted({f for p in parts for f in ([base / p] if (base / p).is_file() else (base / p).rglob("*.py"))})
+    for f in files:
+        h.update(f.read_bytes())
     for p in sorted((REPO_ROOT / "configs").rglob("*.yaml")):
         h.update(p.read_bytes())
     return h.hexdigest()[:16]
@@ -48,7 +59,6 @@ class Demo:
         root.mkdir(parents=True, exist_ok=True)
         self.status_path = root / "status.json"
         self.status = read_json(self.status_path) if self.status_path.exists() else {}
-        self.chash = code_hash()
         self.known = [f for f in self.cfg.protos.ids if f not in self.cfg.demo.hidden]
 
     # -------------------------------------------------------------- bookkeeping
@@ -56,8 +66,10 @@ class Demo:
         return self.root / s
 
     def key(self, s: str) -> str:
+        if s == "report":  # always rebuilt from whatever exists
+            return str(time.time())
         up = [self.status.get(u, {}).get("key", "") for u in DEPS.get(s, [])]
-        payload = json.dumps([s, self.cfg.model_dump(mode="json"), self.chash, up], sort_keys=True, default=str)
+        payload = json.dumps([s, self.cfg.model_dump(mode="json"), code_hash(s), up], sort_keys=True, default=str)
         return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
     def save(self) -> None:
@@ -297,7 +309,7 @@ class Demo:
                 self.status[s] = {"status": "blocked", "reason": f"waiting for {', '.join(blocked)}"}
                 self.save()
                 continue
-            if s in ("release", "fleet", "scene2", "edge", "report") and not self.gate_passed():
+            if s in ("release", "fleet", "scene2", "edge") and not self.gate_passed():
                 self.status[s] = {"status": "awaiting_approval",
                                   "reason": "gate not passed: press Approve in the UI or rerun with --approve (or a check failed)"}
                 self.save()

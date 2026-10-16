@@ -93,3 +93,30 @@ Every place where the implementation departs from, or fills a gap in, the build 
 - **Gate.**
   - The known-class accuracy check uses window-level argmax accuracy on the corpus blind-test split.
   - Background false alarm = fraction of background-only windows (P7/P8 test tracks) that are flagged unknown *or* labelled as the new class. The check compares adapted vs base.
+- **Anti-forgetting.** Replay alone let the LoRA shift the known classes' surprise and embeddings. In the demo profile that raised known false-unknowns from 4.8 % to 6.8–14.8 % and failed the background check. Two terms on the replayed half fix it: KL(base ‖ adapted) on the six field heads (weight 1) and 1 − cos(pooled h_adapted, pooled h_base) (weight 10), learning-without-forgetting style. Every centroid is also recomputed under the adapted model, since stale known-class centroids inflated z_d.
+- **Background check data.** The background-FA check scores half-overlapping windows of the val + test background tracks, with base and adapted compared on the same windows. With 212 windows the binomial noise (≈2 pp) exceeded the 1 pp threshold. `gate.max_fa_increase` keeps its 0.01 default; the spec gives no number.
+
+## Edge, release, federation (§2.8)
+- **ONNX export.** The student is exported with a fixed context (right-padded) and an explicit validity mask for mean pooling. During export, attention uses an explicit causal mask (`Attention.export_mode`): the legacy exporter mis-exports SDPA's `is_causal` (logit errors ≈ 0.13), whereas the explicit mask matches PyTorch to 1e-6. INT8 is onnxruntime static QDQ PTQ (per-channel symmetric INT8 on MatMul/Gemm) on `edge.calib_sequences` windows (512 full, 128 demo). TensorRT is only reported as available or not; no TensorRT engine is built.
+- **INT8 speed.** On the development CPU, INT8 QDQ ran *slower* than fp32 (≈1.8 vs 0.9 ms per window), probably for lack of VNNI kernels. The size halves. Both numbers are reported as measured.
+- **Fleet nodes.** Nodes run the PyTorch teacher with the hot-loadable LoRA adapter, because the release package carries adapter weights per the spec. The distilled INT8 student is a separate edge deliverable, benchmarked in the async pipeline (`edge bench`). Shipping a re-distilled student inside the release is future work.
+- **Hot-load.** A watcher thread polls the release folder every 0.2 s. A package that verifies (Ed25519 signature over the manifest plus SHA-256 of every file) and has a higher semver is loaded into a new state object, which replaces the old one in a single locked assignment. The scoring loop snapshots the state per decision. Packages are written to a temp name and renamed, so a watcher never sees a partial file.
+- **Upstream record.** 96 bytes per burst: TOA f64, PW f32, FC f64, BW f32, SNR f16, track-id i32, z-scale f16, plus 64 × int8 z. FedAvg runs on count/Σ/Σ² of window surprise per 2 dB SNR bin, collected from windows the base model judged known. Adapter-delta averaging (spec: optional) is not implemented.
+- **Node scenes.** Each node simulates its own fast-BDW scene (background mix and distance range from `configs/nodes.yaml`, plus P1 and the new family). Each is paced so all nodes take the same wall time, and the release is dropped once every node is ≥ 40 % through its stream.
+
+## Evaluation (§2.9)
+- **Baselines.** One blob-level CNN is trained on single-burst inputs: the log-STFT image of the preprocessed burst plus [log BW, log PW], which stand in for the blob's shape on the wideband t-f plane. Its per-burst unknown scores (MSP, energy, OpenMax with tail 20 and α = 2, nearest class-mean cosine) are averaged over the same 32-burst windows SpectrumLM scores.
+- **Time-to-detect.** For window-scored methods this is the time from a track's first burst to its first window above the known-class 95th percentile. The CUSUM row uses the first CUSUM alarm.
+- **Ablations.**
+  - "No waveform code": the field is masked at inference and removed from A′, not retrained.
+  - "No SNR calibration": one flat bin is fitted.
+  - "N = 1": each burst is scored from [BOS] only.
+  - All three refit their own conformal scores with α fixed.
+  - The SDIF ablation is reported as association metrics plus track-level AUROC on a fast-mode scene with same-family pairs.
+- **Hidden-family test data.** Comes from fast-BDW sessions of the hidden families, tokenized with the fold's own VQ. The live-scene results (full IQ + reference detector) are in the demo report.
+- **Demo profile.** `make demo` evaluates its own fold ({P3, P6}) into `runs/demo/table3.md`. `vimmune eval loco` trains and evaluates `eval.folds` from scratch (`--k-curve` adds the vaccine recall-vs-K curve, which needs a DDPM per fold).
+
+## Demo (§2.10)
+- **Approval.** `make demo` runs `vimmune demo run --profile demo --approve`, i.e. the human approval is given by the CLI flag, as the spec allows. `make demo-interactive` stops at the gate (`awaiting_approval`) for the Streamlit Approve button, which applies `approve_gate` and runs the remaining stages.
+- **Which track is vaccinated.** The demo vaccinates the *largest* track flagged as unknown in scene 1. Ground truth is never used to choose it. Cards are built for every flagged track, so a P6 card shows the link pairing.
+- **Stage caching.** The cache key of each stage is a hash of the full config, a hash of all source and config files, and the upstream keys. Any code change reruns everything, which is safer than stale caches.

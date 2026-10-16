@@ -75,13 +75,22 @@ class OpenMax:
     def fit(self, logits: np.ndarray, y: np.ndarray) -> OpenMax:
         K = logits.shape[1]
         self.mav = np.zeros((K, K))
-        self.wb = []
+        self.wb: list[tuple[str, object]] = []
         for c in range(K):
             av = logits[(y == c) & (logits.argmax(1) == c)]
             self.mav[c] = av.mean(0)
             d = np.sort(np.linalg.norm(av - self.mav[c], axis=1))[-self.tail :]
-            self.wb.append(weibull_min.fit(d, floc=0))
+            try:
+                self.wb.append(("weibull", weibull_min.fit(d, floc=0)))
+            except Exception:  # degenerate tail (e.g. near-identical distances): empirical tail CDF instead
+                self.wb.append(("empirical", d))
         return self
+
+    def _cdf(self, c: int, x: float) -> float:
+        kind, p = self.wb[c]
+        if kind == "weibull":
+            return float(weibull_min.cdf(x, *p))
+        return float(np.searchsorted(p, x, side="right") / len(p))
 
     def unknown_prob(self, logits: np.ndarray) -> np.ndarray:
         K = logits.shape[1]
@@ -91,7 +100,7 @@ class OpenMax:
             rank = np.argsort(-av)
             w = np.ones(K)
             for i, c in enumerate(rank[:a]):
-                cdf = weibull_min.cdf(np.linalg.norm(av - self.mav[c]), *self.wb[c])
+                cdf = self._cdf(c, float(np.linalg.norm(av - self.mav[c])))
                 w[c] = 1 - (a - i) / a * cdf
             rev = av * w
             unk = np.sum(av * (1 - w))
