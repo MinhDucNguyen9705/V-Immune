@@ -1,0 +1,13 @@
+# Live scene 1 ("first contact"): background + known P1/P4 + the unknown adaptive P3 (+ unknown P6 pair).
+name: first_contact
+duration_s: 6.0
+seed: 7
+environment: sim-urban
+session_id: scene1
+emitters:
+  - {family: P7, distance_m: 60, channel: 2, seed: 1}     # wifi-like at +5 MHz
+  - {family: P8, distance_m: 80, seed: 2}                 # ble-like advertiser
+  - {family: P1, distance_m: 150, seed: 3}                # known controller
+  - {family: P4, distance_m: 120, channel: 0, seed: 4}    # known video link
+  - {family: P3, distance_m: 160, seed: 5}                # UNKNOWN adaptive controller
+  - {family: P6, distance_m: 180, seed: 6}                # UNKNOWN telemetry pair

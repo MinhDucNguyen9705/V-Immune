@@ -1,0 +1,6 @@
+# Three simulated edge nodes for the federation demo (spec §6.7). Each sees a different background mix
+# and SNR profile (distances drive SNR through the path-loss model).
+nodes:
+  - {node_id: node-a, environment: urban, background: [P7, P7, P8], distance_m: [50, 300], duration_s: 4.0, seed: 11}
+  - {node_id: node-b, environment: suburban, background: [P7, P8], distance_m: [100, 500], duration_s: 4.0, seed: 22}
+  - {node_id: node-c, environment: rural, background: [P8], distance_m: [200, 900], duration_s: 4.0, seed: 33}

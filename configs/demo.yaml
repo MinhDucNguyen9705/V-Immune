@@ -1,0 +1,16 @@
+# Demo profile: same algorithms, smaller models / fewer steps / shorter scenes so `make demo`
+# finishes in <= 20 min on an 8-core CPU.
+inherit: full
+profile: demo
+sim:
+  corpus: {sessions_per_family: 40, bursts_per_session: 320}
+tokenizer: {steps: 1200, batch: 128, channels: [16, 32, 32, 32], max_train_bursts: 30000}
+lm: {d_model: 128, n_layers: 4, n_heads: 4, ctx: 128, warmup: 150, steps: 1500, batch: 32, ft_steps: 300}
+openset: {cusum_sim_streams: 100, cusum_sim_hours: 10.0}
+vaccine:
+  n_seq: 200
+  adapter_steps: 300
+  ddpm: {channels: [16, 32, 64], cond_dim: 64, steps: 600, lora_steps: 150, ddim_steps: 20, n_samples: 600,
+         max_train_bursts: 20000}
+edge: {student_d: 96, distill_steps: 400, calib_sequences: 128}
+eval: {folds: [["P3", "P6"], ["P2", "P5"]], n_seq_per_family: 60}

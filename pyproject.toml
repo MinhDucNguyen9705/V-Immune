@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vimmune"
+version = "0.1.0"
+description = "V-IMMUNE: receive-only detection, description and fast learning of unseen UAV burst protocols (research code, simulation only)"
+requires-python = ">=3.10"
+dependencies = [
+  "torch>=2.2", "numpy", "scipy", "scikit-learn", "pandas", "pyarrow", "pydantic>=2", "pyyaml",
+  "typer", "rich", "matplotlib", "plotly", "streamlit", "onnx", "onnxruntime", "onnxscript", "cryptography",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff", "mypy", "types-PyYAML"]
+
+[project.scripts]
+vimmune = "vimmune.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 110
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E501", "E731", "B008", "B905", "E741"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+check_untyped_defs = false
+warn_unused_ignores = false
+# Optional per-family fields are validated by family type; numpy stub unions are noisy (see DECISIONS).
+disable_error_code = ["operator", "arg-type", "union-attr", "call-overload", "index", "assignment", "return-value", "misc"]
+files = ["src/vimmune"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = ["slow: longer tests (still CPU-only)"]

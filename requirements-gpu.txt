@@ -1,0 +1,5 @@
+# CUDA build of torch (pick the index matching your driver). TensorRT is optional and import-guarded.
+--extra-index-url https://download.pytorch.org/whl/cu124
+torch>=2.2
+onnxruntime-gpu
+-r requirements.txt

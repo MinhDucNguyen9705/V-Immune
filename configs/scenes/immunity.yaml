@@ -1,0 +1,12 @@
+# Live scene 2 ("immunity"): different seeds and distances, P3 present again.
+name: immunity
+duration_s: 4.0
+seed: 99
+environment: sim-suburban
+session_id: scene2
+emitters:
+  - {family: P7, distance_m: 90, channel: 1, seed: 11}
+  - {family: P8, distance_m: 120, seed: 12}
+  - {family: P1, distance_m: 110, seed: 13}
+  - {family: P5, distance_m: 140, channel: 0, seed: 14}
+  - {family: P3, distance_m: 220, seed: 15}

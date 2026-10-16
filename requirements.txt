@@ -1,0 +1,22 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch>=2.2
+numpy
+scipy
+scikit-learn
+pandas
+pyarrow
+pydantic>=2
+pyyaml
+typer
+rich
+matplotlib
+plotly
+streamlit
+onnx
+onnxruntime
+onnxscript
+cryptography
+pytest
+ruff
+mypy
+types-PyYAML

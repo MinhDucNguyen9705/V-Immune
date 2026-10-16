@@ -1,0 +1,29 @@
+# Full profile: the numbers given in the spec. Anything omitted uses the defaults in src/vimmune/config.py,
+# which are the same spec numbers.
+profile: full
+seed: 1234
+device: auto
+sim:
+  fs: 30.72e6
+  center_freq: 2.44e9
+  chunk_s: 0.1
+  corpus: {sessions_per_family: 200, bursts_per_session: 1024}
+detect: {nfft: 1024, hop: 256, noise_window_s: 0.2, pfa: 1.0e-4, bw_db: -10.0, iq_bw_factor: 1.2}
+tokenizer: {dtoa_bins: 256, fc_bins: 512, bw_bins: 128, pw_bins: 128, snr_bins: 56, z_dim: 64, codebook: 512,
+            commitment: 0.25, steps: 20000}
+assoc: {window_s: 2.0, step_s: 0.5, cos_min: 0.85, dlogbw_max: 0.1, dlogpw_max: 0.2, sdif_tol: 0.02,
+        min_track_bursts: 32}
+lm: {d_model: 256, n_layers: 6, n_heads: 8, ctx: 256, dropout: 0.1, mask_prob: 0.15, lr: 3.0e-4, warmup: 2000,
+     batch: 64, grad_clip: 1.0, steps: 30000}
+openset: {epsilon: 0.05, snr_bin_db: 2.0, score_len: 32, cusum_target_h: 1.0}
+grammar: {max_track_s: 60.0, dbscan_eps_bw: 0.5, dbscan_min_samples: 5, det_entropy: 0.2, rand_entropy: 0.85,
+          adaptive_rho: -0.5, adaptive_window_s: 10.0}
+vaccine:
+  k: 30
+  k_list: [5, 10, 20, 50]
+  n_seq: 500
+  seq_len: 64
+  lora_rank: 8
+  ddpm: {T: 1000, lora_rank: 4, lora_steps: 500, ddim_steps: 50, n_samples: 2000}
+  gate: {min_recall: 0.9, max_acc_drop: 0.01, max_fa_increase: 0.01}
+edge: {student_layers: 2, student_d: 192, distill_T: 2.0, calib_sequences: 512, rescore_every: 32}
