@@ -30,7 +30,7 @@ def test_vq_codebook_usage(tmp_path):
     df = make_corpus(CFG, ["P1", "P4", "P7", "P8"], tmp_path, n_sessions=3, workers=4)
     W = prep_bursts(df, tmp_path / "bursts", CFG.tokenizer, workers=4)
     assert W.shape[1] == 1024 and np.allclose(np.mean(np.abs(W[:, :100]) ** 2), 1, atol=0.3)
-    model, hist = train_vq(W, CFG.tokenizer, steps=300)
+    model, hist = train_vq(W, CFG.tokenizer, steps=CFG.tokenizer.steps)
     assert np.mean(hist[-30:]) < np.mean(hist[:30])
     z, codes = encode_waves(model, W)
     assert z.shape == (len(W), 64)

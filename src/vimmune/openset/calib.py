@@ -150,7 +150,7 @@ def choose_kappa_h(series_by_family: dict[str, list[np.ndarray]], dt_by_family: 
                    seed: int, shift: float) -> tuple[float, float, dict[str, float], dict[str, float]]:
     """(κ, h) minimizing the expected detection delay h/(δ − κ) for a reference shift δ, subject to the MTBFA
     target on every known family. δ is the typical mean ℓ of validation pseudo-unknowns."""
-    best = (np.inf, kappas[0], np.inf, {})
+    best: tuple[float, float, float, dict[str, float]] = (np.inf, kappas[0], np.inf, {})
     table = {}
     for k in sorted(kappas):
         if k >= shift:

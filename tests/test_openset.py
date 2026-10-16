@@ -18,7 +18,7 @@ def test_conformal_false_unknown_rate():
     rng = np.random.default_rng(0)
     eps = 0.05
     rates = []
-    for r in range(20):
+    for _ in range(20):
         cal = rng.standard_t(4, 300)  # heavy-tailed known-class scores
         test = rng.standard_t(4, 2000)
         rates.append(np.mean(p_value(test, cal) < eps))
