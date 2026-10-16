@@ -8,7 +8,39 @@ edge nodes that hot-load it.
 > and no real commercial protocol is modelled. All signals come from the built-in simulator (fictional families
 > P1–P8) or from user-supplied recordings.
 
-<!-- RESULTS -->
+## What the demo shows (numbers from `runs/demo`, demo profile, 8-core CPU)
+
+`make check && make demo` on a clean checkout: 44 tests pass; the demo finishes in **15.7 min** of stage compute
+(`runs/demo/status.json`). The numbers below come from that run.
+
+| step | result (file) |
+|---|---|
+| Training corpus | 111 k measured bursts, known families P1, P2, P4, P5, P7, P8; P3 and P6 hidden (`corpus/meta.json`) |
+| SpectrumLM (demo size, 1.2 M params) | known-class window accuracy 1.00 on the session-disjoint test split (`lm/metrics.json`) |
+| Calibration | false-unknown rate on held-out known windows 5.4 % at ε = 5 %; CUSUM κ = 2, h = 104 (MTBFA ≥ 1 h per known family, block-bootstrap simulation) (`calibrate/metrics.json`) |
+| Scene 1 (6 s, 30.72 MHz full IQ) | detector recall 1.00 on isolated bursts at SNR ≥ 0 dB; 16 tracks released (`scene1/detect_info.json`) |
+| First contact | the unknown **P3** track (purity 0.998) is flagged: conformal p = 0.003, CUSUM alarm **0.62 s** after its first burst; the hidden P6 track alarms at 0.40 s (`scene1/tracks_base.parquet`) |
+| Protocol ID Card (P3) | 18 channels (truth 20; Jaccard 0.90), frame period 8.000 ms (relative error 8e-7), hopping "mixed", **adaptive avoidance detected** (`cards/track12/card.json`) |
+| Vaccine (K = 30 real bursts) | 200 synthetic sequences; waveforms from the **parametric fallback** (the tiny demo DDPM produced 0 samples passing the quality filter, as reported); adapter 40 KB; flag → adapter 110 s (`vaccine/vaccine_report.json`) |
+| Gate (real data only) | held-out real recall 1.00, known accuracy drop 0.0 pp, background false-alarm increase +0.76 pp (≤ 1 pp), human approval via `--approve` → **passed** (`vaccine/gate_report.json`) |
+| Release + fleet | Ed25519-signed `vimmune-1.1.0.vpkg`; 3 node processes hot-load 1.0.0 → 1.1.0 mid-stream without restart; upstream 96 B/burst (≈14–50 kB/s per node vs 122.9 MB/s raw IQ at 30.72 MHz, 983 MB/s at 245.76 MHz) (`fleet/fleet_report.json`) |
+| Scene 2 (immunity) | the P3 track: before **UNKNOWN** (CUSUM alarm 0.51 s) → after classified **P3** 0.28 s after its first burst (`scene2/before_after.parquet`) |
+| Edge | student (2 layers) accuracy 0.997 vs teacher 1.000; open-set AUROC (pseudo-unknowns) 0.900 vs 0.965; INT8 ONNX 0.898, 1.1 MB (fp32 2.2 MB); async detector→tokenizer→association→INT8-student pipeline on 2 s of scene-1 IQ: 27 bursts/s (0.05× real time), decision latency mean 5.4 s / p99 16 s, peak RSS 1.4 GB (`edge/edge_report.json`) |
+| `make eval` (2 LOCO folds, `runs/eval/table3.md`) | V-IMMUNE AUROC 0.890 ± 0.110, TPR@5 % 0.75, time-to-detect 0.34 s; blob-CNN baselines AUROC 0.42–0.46 |
+| Table 3 (demo fold, hidden P3+P6) | V-IMMUNE AUROC 1.000, TPR@5 % 1.000, time-to-detect 0.37 s (CUSUM 0.43 s); blob-CNN baselines: MSP 0.10, energy 0.19, OpenMax 0.45, nearest centroid 0.50 (`table3.md`) |
+
+Scene 1 waterfall with detected blobs and the track table (from `runs/demo/demo_report.html`):
+
+![scene 1](docs/img/scene1_waterfall_tracks.png)
+
+CUSUM surprise monitor (P3 red, P6 orange, alarms marked):
+
+![surprise monitor](docs/img/surprise_monitor.png)
+
+Protocol ID Card inferred for the P3 track:
+
+![card](docs/img/card_track12.png)
+
 
 ## Quickstart
 
@@ -86,6 +118,29 @@ a GPU or a long CPU run; CUDA is used automatically when available.
 
 ## Known limitations (honest list)
 
-<!-- LIMITATIONS -->
+- **Simulation only.** Every result is on fictional families from the built-in simulator. Real detectors, channels and
+  protocols will behave differently. The fast-BDW noise model was fitted to *this* reference detector.
+- **Known families flagged in live scenes.** The detector merges colliding bursts into one blob, and association does
+  not always separate co-channel emitters. In scene 1 this flags several known tracks as unknown: WiFi-like and P4
+  bursts merged into 20–30 MHz blobs, and a P1 track mixed with other emitters. In scene 2 it flags some P5 tracks.
+  These are genuine false alarms of the full chain. The per-window conformal guarantee holds only for data like the
+  calibration corpus.
+- **P6 not split.** Its uplink and downlink ended up in one track (purity 0.68), so the P6 card shows no link pairing.
+  Pairing does work on fast-mode data (`tests/test_grammar.py`).
+- **The demo DDPM is too small to help.** The demo-profile DDPM (300 CPU steps) produces no samples that pass the
+  quality filter, so the demo uses the labelled parametric fallback. The full profile trains a larger model; the code
+  path is tested, but on CPU in this repo it has not been shown to beat the fallback.
+- **Hidden-family difficulty varies.** In `make eval` (2 folds), unseen P3 + P6 are detected at AUROC ≈ 1.0. Unseen
+  P2 + P5 reach only ≈ 0.78, because P5 resembles the known 20 MHz WiFi-like family. In that fold the known-class
+  false-unknown rate is 10.1 %, double ε, because the calibration and test sessions differ more than the conformal
+  assumptions allow. The ablations differ by only a few points, and "no context" even scores slightly higher on
+  average, so this simulator does not establish the value of each component.
+- **Edge runtime is not real-time.** The asynchronous pipeline is far slower than real time on CPU, because the
+  reference detector is NumPy. The INT8 student was *slower* than fp32 on the test CPU (no VNNI); the size halves.
+- **Low SNR.** Wideband bursts below about 0 dB in-band SNR break into fragments in the detector.
+- **Nodes run the teacher.** Fleet nodes run the PyTorch teacher with the hot-loaded adapter. The distilled student is
+  benchmarked separately, and shipping it inside the release is not implemented. FedAvg covers calibration statistics
+  only, not adapter deltas.
+
 
 See [DECISIONS.md](DECISIONS.md) for every deviation from the build spec and why.

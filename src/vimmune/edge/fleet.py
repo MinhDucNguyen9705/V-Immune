@@ -63,6 +63,10 @@ def node_main(spec: dict, cfg: Config, paths: dict, out: Path, new_family: str) 
     up = 0
     for i, r in enumerate(df.itertuples()):  # upstream: BDW + int8 embedding per burst
         up += len(pack_burst(r.toa_s, r.pw_s, r.fc_hz, r.bw_hz, r.snr_db, int(r.track_id), z[i]))
+    (out / "ready").touch()  # start barrier: every node begins streaming at the same moment
+    t_wait = time.time()
+    while not (out / "go").exists() and time.time() - t_wait < 600:
+        time.sleep(0.05)
     prog = out / "progress.json"
     pace = spec.get("run_s", 6.0) / max(1, sum(len(t) for t in tracks))  # equal wall time per node: the drop lands mid-run everywhere
     ev = score_stream(node, tracks, cfg.edge.rescore_every, pace,
@@ -100,6 +104,12 @@ def run_fleet(cfg: Config, paths: dict, release: Path, out: Path, new_family: st
         p.start()
         procs.append((spec, p, d))
     t0 = time.time()
+    while not all((d / "ready").exists() for _, _, d in procs) and time.time() - t0 < timeout_s:
+        if not any(p.is_alive() for _, p, _ in procs):
+            break
+        time.sleep(0.1)
+    for _, _, d in procs:
+        (d / "go").touch()
     dropped = False
     while any(p.is_alive() for _, p, _ in procs) and time.time() - t0 < timeout_s:
         prog = [json.loads((d / "progress.json").read_text())["progress"] if (d / "progress.json").exists() else 0.0 for _, _, d in procs]

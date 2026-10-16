@@ -91,8 +91,15 @@ async def run_pipeline(src: IQSource, cfg: Config, vq, lm: OnnxLM, calib: OpenSe
         assign = np.zeros(0, np.int64)
         t_next = None
         scored: dict[int, int] = {}
-        while (item := await q_tok.get()) is not None:
-            t_emit, blobs, z, codes, t_sig = item
+        while True:
+            item = await q_tok.get()
+            final = item is None
+            if final:  # end of stream: close every remaining window
+                if not rows:
+                    break
+                t_emit, blobs, z, codes, t_sig = time.time(), [], np.zeros((0, cfg.tokenizer.z_dim), np.float32), np.zeros(0, np.int64), np.inf
+            else:
+                t_emit, blobs, z, codes, t_sig = item
             for b, zz, c in zip(blobs, z, codes):
                 rows.append({k: b[k] for k in ("toa_s", "tod_s", "pw_s", "fc_off_hz", "bw_hz", "snr_db")})
                 Z.append(zz)
@@ -105,7 +112,8 @@ async def run_pipeline(src: IQSource, cfg: Config, vq, lm: OnnxLM, calib: OpenSe
             df = pd.DataFrame(rows)
             toa = df.toa_s.to_numpy()
             t_next = toa.min() if t_next is None else t_next
-            while t_next + a_cfg.window_s <= t_sig:  # a window is complete once signal time passes its end
+            t_last = float(toa.max())
+            while t_next + a_cfg.window_s <= t_sig and (t_next <= t_last or not final):  # window complete once signal time passes its end
                 fc = src.center_freq + df.fc_off_hz.to_numpy()
                 await loop.run_in_executor(None, assoc.step, toa, df.tod_s.to_numpy(), fc, df.bw_hz.to_numpy(),
                                            df.pw_s.to_numpy(), np.stack(Z), assign, t_next)
@@ -121,6 +129,8 @@ async def run_pipeline(src: IQSource, cfg: Config, vq, lm: OnnxLM, calib: OpenSe
                         dec = await loop.run_in_executor(None, onnx_decide, lm, tr, calib, classes, mu)
                         lat.append(time.time() - max(emit[i] for i in idx))
                         decisions.append({"track": int(tid), "n": n, **dec})
+            if final:
+                break
 
     await asyncio.gather(detector(), tokenizer(), associate_and_score())
     wall = time.time() - t_wall0

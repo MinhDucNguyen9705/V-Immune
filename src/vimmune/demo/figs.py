@@ -42,13 +42,13 @@ def cusum_fig(scene: Path, tag: str, tracks: pd.DataFrame) -> go.Figure:
     for r in tracks.itertuples():
         t, g = z[f"{r.track}|t"], z[f"{r.track}|g"]
         lab = f"track {r.track_id} ({r.truth_family})"
-        fig.add_scatter(x=t, y=np.maximum(g, 1e-2), mode="lines", name=lab, line={"color": PALETTE.get(r.truth_family, "#333")})
+        fig.add_scatter(x=t, y=np.minimum(g, 3 * h), mode="lines", name=lab, line={"color": PALETTE.get(r.truth_family, "#333")})
         if r.cusum_alarm and r.cusum_ttd_s is not None:
             fig.add_scatter(x=[r.cusum_ttd_s], y=[h], mode="markers", marker={"symbol": "x", "size": 12, "color": "black"},
                             name=f"alarm {lab} @ {r.cusum_ttd_s:.2f}s", showlegend=True)
     fig.add_hline(y=h, line_dash="dash", annotation_text=f"h = {h:.1f}")
-    fig.update_layout(title="Surprise monitor — CUSUM g_n per track", xaxis_title="time since track start (s)", yaxis_title="g_n",
-                      yaxis_type="log", height=480)
+    fig.update_layout(title="Surprise monitor — CUSUM g_n per track (display capped at 3h)", xaxis_title="time since track start (s)",
+                      yaxis_title="g_n", height=480)
     return fig
 
 
