@@ -45,7 +45,8 @@ class OpenSetScorer:
         w = np.asarray(c.weights) if weights is None else weights
         ws = score_windows(self.model, tracks, c.ctx, c.score_len, w, stride, mask_fields, no_context)
         d, k = distance(ws.h, self.mu) if len(ws.h) else (np.zeros(0), np.zeros(0, int))
-        zS, zd = c.s_cal.z(ws.S, ws.snr), c.d_cal.z(d, ws.snr)
+        nearest = [self.classes[i] for i in k]
+        zS, zd = c.z_s(ws.S, ws.snr, nearest), c.d_cal.z(d, ws.snr)
         U = c.alpha * zS + (1 - c.alpha) * zd
         p = c.p(U)
         if ws.logits.size:
@@ -57,7 +58,7 @@ class OpenSetScorer:
             pred, conf = [self.classes[i] for i in k], np.ones(len(k))
         return pd.DataFrame({"key": ws.key, "label": ws.label, "end": ws.end, "t_end": ws.t_end, "S": ws.S,
                              "snr": ws.snr, "d": d, "zS": zS, "zd": zd, "U": U, "p": p, "unknown": p < c.epsilon,
-                             "pred": pred, "conf": conf, "nearest": [self.classes[i] for i in k]})
+                             "pred": pred, "conf": conf, "nearest": nearest})
 
     def burst_ell(self, tr: Track, windows: pd.DataFrame | None = None) -> np.ndarray:
         """Per-burst standardized surprise ℓ_n.

@@ -241,9 +241,20 @@ class OpenSetCalib:
     mtbfa_h: dict[str, float] = field(default_factory=dict)
     alpha_auroc: dict[str, float] = field(default_factory=dict)
     b_cal_class: dict[str, SNRCalib] = field(default_factory=dict)  # per-burst calibration per known class
+    s_cal_class: dict[str, SNRCalib] = field(default_factory=dict)  # window-surprise calibration per class
 
-    def fuse(self, S: np.ndarray, snr: np.ndarray, d: np.ndarray) -> np.ndarray:
-        return self.alpha * self.s_cal.z(S, snr) + (1 - self.alpha) * self.d_cal.z(d, snr)
+    def z_s(self, S: np.ndarray, snr: np.ndarray, nearest: list[str] | None = None) -> np.ndarray:
+        """Surprise z-score; standardized with the nearest class's table when one exists (else global)."""
+        z = self.s_cal.z(S, snr)
+        if nearest is not None and self.s_cal_class:
+            for c, cal in self.s_cal_class.items():
+                m = np.array([n == c for n in nearest], bool)
+                if m.any():
+                    z[m] = cal.z(np.asarray(S)[m], np.asarray(snr)[m])
+        return z
+
+    def fuse(self, S: np.ndarray, snr: np.ndarray, d: np.ndarray, nearest: list[str] | None = None) -> np.ndarray:
+        return self.alpha * self.z_s(S, snr, nearest) + (1 - self.alpha) * self.d_cal.z(d, snr)
 
     def p(self, U: np.ndarray) -> np.ndarray:
         return p_value(U, np.asarray(self.cal_scores))
@@ -256,5 +267,6 @@ class OpenSetCalib:
         d = dict(d)
         for k in ("s_cal", "d_cal", "b_cal"):
             d[k] = SNRCalib(**d[k])
-        d["b_cal_class"] = {c: SNRCalib(**v) for c, v in d.get("b_cal_class", {}).items()}
+        for k in ("b_cal_class", "s_cal_class"):
+            d[k] = {c: SNRCalib(**v) for c, v in d.get(k, {}).items()}
         return OpenSetCalib(**d)

@@ -78,3 +78,18 @@ Every place where the implementation departs from, or fills a gap in, the build 
 - **Adaptive avoidance.** Occupancy is the union of background-burst intervals overlapping each channel band over [t_end − max(10 s, track duration), t_end]. Background means every burst not in the flagged track.
 - **Link pairing.** Cross-correlation is computed as the histogram of nearest-neighbour burst lags within ±50 ms (50 µs bins). A partner needs ≥ 50 % of the flagged bursts in the peak (two-bin) lag.
 - **Card evaluation.** Jaccard compares against the channels the source actually used in the simulator truth (a P6 link uses one channel of its family plan).
+- **z_S per class.** z_S is standardized per *nearest class*: μ(s)/σ(s) tables of window surprise per known class, from cal-A, with the global table as fallback. With one global table, a vaccinated high-entropy protocol (P3 hops pseudo-randomly) keeps a high surprise relative to the known families even when perfectly modelled, so it would stay "unknown" after vaccination. Per-class tables also lifted hidden-family AUROC in the demo profile from 0.95 to 1.0 (P3/P6 fast-mode tracks), with test false-unknown 4.8 % at ε = 5 %. After vaccination, the new class's table comes from its synthetic sequences; that is calibration only, never gate scoring.
+
+## Vaccine (§2.7)
+- **K and the 70/30 split.** "K real bursts, 70 % learn / 30 % held-out" is implemented as follows:
+  - The flagged track is split per session by time: first 70 % = learn, last 30 % = real held-out.
+  - K bursts are drawn at random from the learn part. They train the DDPM LoRA and give the empirical PW/BW distributions and the conditioning centroid z̄.
+  - The card's transition matrix and period come from the whole learn part, because the card is built from it.
+  - The held-out part is never seen by the card or the vaccine and is used only by the gate, as windows of 32 bursts. 30 % of K = 30 bursts (9) could not form a single 32-burst sequence.
+- **Snippet length.** Synthetic waveforms live in the tokenizer's preprocessed domain (1024 samples at fs′ = BW/0.8, unit power), so their VQ codes are directly comparable with real bursts. The quality filter re-estimates BW from the PSD at fs′. PW is checked only when PW·fs′ < 0.95·1024; longer bursts (video/WiFi-like) fill the window, so their PW is not measurable there.
+- **Parametric fallback.** If fewer than 20 DDPM samples pass the filter, the run falls back to the parametric generator (`--waveform-mode param`: GFSK or OFDM fitted from the card). The waveform kind is classified from the real bursts' spectral shape: band-edge/centre PSD ratio > 0.5 → OFDM. The fallback and its reason are written to `vaccine_report.json` and shown in the UI and report. The demo profile's tiny DDPM (300 pretraining steps on CPU) typically lands here, which is the honest result.
+- **Augmentation.** Background interference uses simulated WiFi-/BLE-like waveforms (fictional families), not recordings.
+- **Adapter.** Trainable parameters are LoRA A/B on Q and V of every layer plus the whole (n+1)-class head; replay is real known-class corpus train tracks. μ_new is the centroid of the synthetic windows under the adapted model. After training, the score tables and conformal scores are refit with the adapted model; α, κ and h keep their base values. The adapter is stored as fp16 tensors.
+- **Gate.**
+  - The known-class accuracy check uses window-level argmax accuracy on the corpus blind-test split.
+  - Background false alarm = fraction of background-only windows (P7/P8 test tracks) that are flagged unknown *or* labelled as the new class. The check compares adapted vs base.

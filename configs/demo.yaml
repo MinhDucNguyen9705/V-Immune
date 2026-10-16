@@ -10,7 +10,7 @@ openset: {cusum_sim_streams: 100, cusum_sim_hours: 1.0}
 vaccine:
   n_seq: 200
   adapter_steps: 300
-  ddpm: {channels: [16, 32, 64], cond_dim: 64, steps: 600, lora_steps: 150, ddim_steps: 20, n_samples: 600,
-         max_train_bursts: 20000}
+  ddpm: {channels: [16, 32, 48], cond_dim: 64, batch: 32, steps: 300, lora_steps: 100, ddim_steps: 20, n_samples: 600,
+         max_train_bursts: 8000}
 edge: {student_d: 96, distill_steps: 400, calib_sequences: 128}
 eval: {folds: [["P3", "P6"], ["P2", "P5"]], n_seq_per_family: 60}
