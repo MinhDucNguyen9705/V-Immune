@@ -314,6 +314,7 @@ class DemoCfg(_M):
     scene1: str = "configs/scenes/first_contact.yaml"
     scene2: str = "configs/scenes/immunity.yaml"
     unknown_family: str = "P3"
+    edge_bench_s: float = 2.0  # seconds of scene-1 IQ pushed through the async edge pipeline
 
 
 class Config(_M):

@@ -16,12 +16,11 @@ import pandas as pd
 from vimmune.config import Config, seed_everything
 from vimmune.grammar.card import Card
 from vimmune.lm.data import Track, build_tracks
-from vimmune.lm.train import centroids, embed_windows
 from vimmune.pipeline import _log, corpus_tracks, fit_calibration, load_lm, read_json, write_json
 from vimmune.tokenize.fields import Tokenizer
 from vimmune.tokenize.vq import encode_waves, load_vq, prep_bursts, to_tensor
 from vimmune.vaccine import synth
-from vimmune.vaccine.adapter import adapted_model, evaluate_gate, new_centroid, save_adapter, train_adapter
+from vimmune.vaccine.adapter import build_adapter, evaluate_gate, save_adapter
 
 MIN_KEEP = 20  # fewer filtered DDPM samples than this -> parametric fallback (recorded, never silent)
 
@@ -133,14 +132,10 @@ def run_vaccine(cfg: Config, *, track: pd.DataFrame, store: Path, card: Card, ba
     classes = bundle.classes + [new_name]
     corp = corpus_tracks(cfg, corpus, tok_dir)
     replay = [t for t in corp["train"] if t.label in bundle.classes]
-    model, params = adapted_model(base, v.lora_rank)
     t0 = time.time()
-    hist = train_adapter(model, params, syn_tracks, replay, classes, cfg, seed, steps, log=_log, base=base)
+    model, mu_ext, hist = build_adapter(base, bundle.classes, syn_tracks, replay, new_name, cfg, seed, steps, log=_log)
     t_adapter = time.time() - t0
-    # all centroids under the adapted model: the LoRA shifts h for known classes too
-    h_k, _, lab_k = embed_windows(model, replay, cfg.lm.ctx, cfg.openset.score_len, stride=cfg.lm.ctx)
-    mu_new = new_centroid(model, syn_tracks, cfg)
-    mu_ext = np.concatenate([centroids(h_k, lab_k, bundle.classes), mu_new[None]])
+    mu_new = mu_ext[-1]
 
     # 6. recalibrate with the adapted model (α, κ, h fixed); 7. gate on real data only
     base_cal = OpenSetCalib.from_dict(read_json(base_calib))

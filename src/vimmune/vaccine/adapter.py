@@ -101,6 +101,17 @@ def train_adapter(model: SpectrumLM, params: list[nn.Parameter], syn: list[Track
     return hist
 
 
+def build_adapter(base: SpectrumLM, base_classes: list[str], syn: list[Track], replay: list[Track], new_name: str,
+                  cfg: Config, seed: int, steps: int | None = None, log=None) -> tuple[SpectrumLM, np.ndarray, list[float]]:
+    """The full adapter recipe: LoRA + extended head trained 50/50 with anti-forgetting terms, then every
+    centroid recomputed under the adapted model (the LoRA shifts h for known classes too)."""
+    model, params = adapted_model(base, cfg.vaccine.lora_rank)
+    hist = train_adapter(model, params, syn, replay, base_classes + [new_name], cfg, seed, steps, log, base=base)
+    h_k, _, lab_k = embed_windows(model, replay, cfg.lm.ctx, cfg.openset.score_len, stride=cfg.lm.ctx)
+    mu_ext = np.concatenate([centroids(h_k, lab_k, base_classes), new_centroid(model, syn, cfg)[None]])
+    return model, mu_ext, hist
+
+
 def new_centroid(model: SpectrumLM, syn: list[Track], cfg: Config) -> np.ndarray:
     h, _, lab = embed_windows(model, syn, cfg.lm.ctx, cfg.openset.score_len, stride=cfg.lm.ctx)
     return centroids(h, lab, [str(lab[0])])[0]

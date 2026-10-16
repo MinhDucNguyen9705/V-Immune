@@ -10,14 +10,7 @@ from vimmune.lm.model import LoRALinear
 from vimmune.openset.scorer import OpenSetScorer
 from vimmune.pipeline import fit_calibration
 from vimmune.sim.waveforms import gfsk, ofdm
-from vimmune.vaccine.adapter import (
-    adapted_model,
-    evaluate_gate,
-    load_adapter,
-    new_centroid,
-    save_adapter,
-    train_adapter,
-)
+from vimmune.vaccine.adapter import adapted_model, build_adapter, evaluate_gate, load_adapter, save_adapter
 from vimmune.vaccine.synth import classify_waveform
 
 
@@ -32,9 +25,7 @@ def test_gate_passes_trained_and_blocks_broken(world):
     base_sc = OpenSetScorer(m, ["A", "B"], mu, calib)
     before = base_sc.score(held)
     assert before.unknown.mean() > 0.5  # the new grammar is flagged before vaccination
-    model, params = adapted_model(m, CFG.vaccine.lora_rank)
-    train_adapter(model, params, syn, tr["train"], ["A", "B", "C"], CFG, 0)
-    mu_ext = np.concatenate([mu, new_centroid(model, syn, CFG)[None]])
+    model, mu_ext, _ = build_adapter(m, ["A", "B"], syn, tr["train"], "C", CFG, 0)
     cal_ad, _ = fit_calibration(CFG, model, ["A", "B", "C"], mu_ext, tr, fixed=calib, extra_class=("C", syn))
     good = evaluate_gate(base_sc, OpenSetScorer(model, ["A", "B", "C"], mu_ext, cal_ad), held, tr["test"], tr["test"][6:], "C", CFG.vaccine.gate, True)
     assert good["checks"]["recall_heldout_real"]["value"] >= 0.9

@@ -136,14 +136,17 @@ def load_lm(path: Path) -> tuple[SpectrumLM, LMBundle]:
 
 # ------------------------------------------------------------------------------------------- open set
 def fit_calibration(cfg: Config, model: SpectrumLM, classes: list[str], mu: np.ndarray, tr: dict[str, list[Track]],
-                    fixed=None, extra_class: tuple[str, list[Track]] | None = None):
+                    fixed=None, extra_class: tuple[str, list[Track]] | None = None, score_kw: dict | None = None,
+                    no_snr: bool = False, weights: np.ndarray | None = None):
     """Fit the open-set calibration on corpus cal/val tracks.
 
     With ``fixed`` (a base :class:`OpenSetCalib`), α, κ and h are kept and only the score tables and
     conformal scores are refit (used after an adapter changes the model). ``extra_class`` adds per-burst
-    CUSUM calibration for a new class from its (synthetic) tracks.
+    CUSUM calibration for a new class from its (synthetic) tracks. ``score_kw`` / ``weights`` / ``no_snr`` are
+    the evaluation ablations (masked fields or no context; field weights; a single flat SNR bin).
     """
-    from vimmune.lm.score import burst_surprise, field_weights, score_windows
+    from vimmune.lm.score import burst_surprise, field_weights
+    from vimmune.lm.score import score_windows as _score_windows
     from vimmune.openset.calib import OpenSetCalib, SNRCalib, choose_alpha, choose_kappa_h, distance
     from vimmune.openset.scorer import OpenSetScorer, pseudo_unknowns
 
@@ -156,9 +159,15 @@ def fit_calibration(cfg: Config, model: SpectrumLM, classes: list[str], mu: np.n
     rng.shuffle(sess)
     half = set(sess[: len(sess) // 2])
     cal_a, cal_b = [t for t in cal if t.session in half], [t for t in cal if t.session not in half]
-    w = field_weights(tok.n_bins)
+    w = field_weights(tok.n_bins) if weights is None else weights
     ctx, L = cfg.lm.ctx, o.score_len
-    fitc = lambda v, snr: SNRCalib.fit(v, snr, o.snr_bin_db, o.smooth_bandwidth_bins)  # noqa: E731
+    kw = score_kw or {}
+
+    def fitc(v, snr):
+        return SNRCalib.fit(v, np.zeros_like(snr) if no_snr else snr, o.snr_bin_db, o.smooth_bandwidth_bins)
+
+    def score_windows(m, ts, c, n, ww):  # noqa: F811 - ablation-aware wrapper
+        return _score_windows(m, ts, c, n, ww, **kw)
 
     wa = score_windows(model, cal_a, ctx, L, w)
     da, _ = distance(wa.h, mu)
