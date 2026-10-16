@@ -78,12 +78,17 @@ class OpenMax:
         self.wb: list[tuple[str, object]] = []
         for c in range(K):
             av = logits[(y == c) & (logits.argmax(1) == c)]
+            if len(av) < 2:  # class never (or once) predicted correctly: use all its samples
+                av = logits[y == c]
             self.mav[c] = av.mean(0)
             d = np.sort(np.linalg.norm(av - self.mav[c], axis=1))[-self.tail :]
             try:
-                self.wb.append(("weibull", weibull_min.fit(d, floc=0)))
-            except Exception:  # degenerate tail (e.g. near-identical distances): empirical tail CDF instead
-                self.wb.append(("empirical", d))
+                p = weibull_min.fit(d, floc=0)
+                ok = np.isfinite(weibull_min.cdf(d, *p)).all()
+            except Exception:
+                ok = False
+            # degenerate tail (e.g. near-identical distances): empirical tail CDF instead
+            self.wb.append(("weibull", p) if ok else ("empirical", d))
         return self
 
     def _cdf(self, c: int, x: float) -> float:

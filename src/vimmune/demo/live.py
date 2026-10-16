@@ -75,7 +75,9 @@ def scene_tracks(cfg: Config, out: Path) -> tuple[pd.DataFrame, list[Track]]:
     det = read_bdw(out / "bdw.parquet").reset_index(drop=True)
     keep = released_tracks(det, cfg.assoc.min_track_bursts)
     d = det[det.track_id.isin(keep)]
-    tracks = build_tracks(d, det.wcode.to_numpy()[d.index], Tokenizer(cfg), by="track_id", label_col="truth_protocol")
+    tracks = build_tracks(d.reset_index(drop=True), det.wcode.to_numpy()[d.index], Tokenizer(cfg), by="track_id", label_col="truth_protocol")
+    for t in tracks:  # rows index the filtered frame; map them back to rows of ``det``
+        t.rows = d.index.to_numpy()[t.rows]
     return det, tracks
 
 

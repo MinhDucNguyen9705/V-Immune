@@ -35,7 +35,11 @@ def gfsk(n: int, fs: float, bw_hz: float, rng: np.random.Generator, bt: float = 
 
 
 def ofdm(n: int, fs: float, bw_hz: float, rng: np.random.Generator, scs_hz: float = 30e3, cp: float = 0.125) -> np.ndarray:
-    """CP-OFDM with QPSK on the K = bw/scs subcarriers around DC (DC itself unused)."""
+    """CP-OFDM with QPSK on the K = bw/scs subcarriers around DC (DC itself unused).
+
+    A transmit FIR (cutoff 0.55·BW) enforces a spectral mask, as real transmitters do; unfiltered
+    rectangular-symbol sidelobes would leak energy several MHz outside the channel.
+    """
     N = max(8, int(round(fs / scs_hz)))
     K = min(N - 2, max(2, int(round(bw_hz / (fs / N)))))
     ncp = int(round(cp * N))
@@ -44,7 +48,12 @@ def ofdm(n: int, fs: float, bw_hz: float, rng: np.random.Generator, scs_hz: floa
     X = np.zeros((nsym, N), np.complex64)
     X[:, idx] = (rng.choice([-1, 1], (nsym, len(idx))) + 1j * rng.choice([-1, 1], (nsym, len(idx)))) / np.sqrt(2)
     x = np.fft.ifft(X, axis=1) * (N / np.sqrt(len(idx)))
-    x = np.concatenate([x[:, N - ncp :], x], axis=1).ravel()[:n]
+    x = np.concatenate([x[:, N - ncp :], x], axis=1).ravel()[: n + 64]
+    if bw_hz < 0.9 * fs:  # transmit spectral mask
+        x = signal.lfilter(signal.firwin(129, 1.1 * bw_hz / fs), 1.0, x)[64 : 64 + n]
+        x = x / np.sqrt(np.mean(np.abs(x) ** 2) + 1e-20)
+    else:
+        x = x[:n]
     return x.astype(np.complex64)
 
 

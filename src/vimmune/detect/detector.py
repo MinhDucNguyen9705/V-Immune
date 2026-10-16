@@ -224,7 +224,7 @@ class ReferenceDetector:
 
 
 def label_from_truth(det: pd.DataFrame, truth: pd.DataFrame) -> pd.DataFrame:
-    """Copy protocol/source_id of the truth burst with the largest t-f overlap onto each detection (eval only)."""
+    """Copy protocol/source_id of the truth burst with the largest t-f IoU onto each detection (eval only)."""
     det = det.copy()
     tt, td = truth.toa_s.to_numpy(), truth.tod_s.to_numpy()
     tl, th = (truth.fc_hz - truth.bw_hz / 2).to_numpy(), (truth.fc_hz + truth.bw_hz / 2).to_numpy()
@@ -235,7 +235,9 @@ def label_from_truth(det: pd.DataFrame, truth: pd.DataFrame) -> pd.DataFrame:
         cand = order[j0:j1]
         ot = np.minimum(td[cand], r.tod_s) - np.maximum(tt[cand], r.toa_s)
         of = np.minimum(th[cand], r.fc_hz + r.bw_hz / 2) - np.maximum(tl[cand], r.fc_hz - r.bw_hz / 2)
-        ov = np.where((ot > 0) & (of > 0), ot * of, 0.0)
+        inter = np.where((ot > 0) & (of > 0), ot * of, 0.0)
+        union = (td[cand] - tt[cand]) * (th[cand] - tl[cand]) + r.pw_s * r.bw_hz - inter
+        ov = inter / np.maximum(union, 1e-30)  # IoU: a small blob inside a big truth box must not take its label
         if len(cand) and ov.max() > 0:
             j = cand[int(np.argmax(ov))]
             proto.append(truth.protocol.iloc[j])

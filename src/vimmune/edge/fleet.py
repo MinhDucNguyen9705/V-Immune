@@ -90,7 +90,7 @@ def run_fleet(cfg: Config, paths: dict, release: Path, out: Path, new_family: st
 
     nodes = nodes or load_nodes()
     out.mkdir(parents=True, exist_ok=True)
-    ctx = mp.get_context("fork")
+    ctx = mp.get_context("spawn")  # fork after torch thread pools start can deadlock the children
     procs = []
     for spec in nodes:
         d = out / spec["node_id"]
