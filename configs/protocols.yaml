@@ -9,7 +9,7 @@ families:
   - {id: P1, name: ctrl-seq, kind: control, modulation: gfsk, bw_hz: 1.0e6, pw_s: 0.4e-3, timing: periodic,
      frame_s: 7.0e-3, hop: fixed_seq, n_channels: 16, channel_spacing_hz: 1.6e6, hop_seed: 101, hop_seq_len: 16}
   - {id: P2, name: ctrl-prng, kind: control, modulation: gfsk, bw_hz: 2.0e6, pw_s: 1.0e-3, timing: periodic,
-     frame_s: 10.0e-3, hop: prng, n_channels: 24, channel_spacing_hz: 1.1e6}
+     frame_s: 10.0e-3, hop: prng, n_channels: 24, channel_spacing_hz: 1.2e6}
   - {id: P3, name: ctrl-adaptive, kind: control, modulation: gfsk, bw_hz: 1.0e6, pw_s: 0.6e-3, timing: periodic,
      frame_s: 8.0e-3, hop: adaptive, n_channels: 20, channel_spacing_hz: 1.3e6}
   - {id: P4, name: video-10, kind: video, modulation: ofdm, bw_hz: 10.0e6, pw_s: 2.0e-3, timing: periodic,

@@ -6,7 +6,7 @@ sim:
   corpus: {sessions_per_family: 40, bursts_per_session: 320}
 tokenizer: {steps: 600, batch: 64, channels: [16, 32, 32, 32], max_train_bursts: 30000}
 lm: {d_model: 128, n_layers: 4, n_heads: 4, ctx: 64, warmup: 100, steps: 900, batch: 32, ft_steps: 300}
-openset: {cusum_sim_streams: 100, cusum_sim_hours: 10.0}
+openset: {cusum_sim_streams: 100, cusum_sim_hours: 1.0}
 vaccine:
   n_seq: 200
   adapter_steps: 300

@@ -105,7 +105,7 @@ class CorpusCfg(_M):
     bursts_per_session: int = 1024
     distance_m: tuple[float, float] = (10.0, 600.0)
     snippet_len: int = 1024
-    split: tuple[float, float, float, float] = (0.7, 0.1, 0.1, 0.1)  # train/val/cal/test by session
+    split: tuple[float, float, float, float] = (0.6, 0.1, 0.2, 0.1)  # train/val/cal/test by session
 
 
 class SimCfg(_M):
@@ -213,10 +213,13 @@ class OpenSetCfg(_M):
     snr_bin_db: float = 2.0
     alpha_grid: list[float] = [round(0.1 * i, 1) for i in range(11)]
     epsilon: float = 0.05
-    cusum_kappa: float = 0.5
+    cusum_kappa_grid: list[float] = [0.5, 1.0, 2.0, 3.0]
+    cusum_h_max: float = 200.0
+    cusum_ref_shift: float = 3.0  # design shift δ (σ units) for which (κ, h) minimise the detection delay
+    ell_clip: float = 10.0  # robust CUSUM: |ℓ_n| clipped so one outlier burst cannot alarm alone
     cusum_target_h: float = 1.0  # mean time between false alarms per known source (hours)
     cusum_sim_streams: int = 200
-    cusum_sim_hours: float = 20.0
+    cusum_sim_hours: float = 4.0
     cusum_block: int = 32
     smooth_bandwidth_bins: float = 2.0
 

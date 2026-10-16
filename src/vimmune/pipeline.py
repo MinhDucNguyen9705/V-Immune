@@ -132,3 +132,94 @@ def stage_lm(cfg: Config, corpus: Path, tok_dir: Path, out: Path, classes: list[
 def load_lm(path: Path) -> tuple[SpectrumLM, LMBundle]:
     b = LMBundle.load(path)
     return b.build(), b
+
+
+# ------------------------------------------------------------------------------------------- open set
+def stage_calibrate(cfg: Config, corpus: Path, tok_dir: Path, lm_dir: Path, out: Path) -> dict:
+    """Fit SNR calibration (cal-A), choose α on val + pseudo-unknowns, conformal scores (cal-B), CUSUM κ/h."""
+    from vimmune.lm.score import burst_surprise, field_weights, score_windows
+    from vimmune.openset.calib import OpenSetCalib, SNRCalib, choose_alpha, choose_kappa_h, distance
+    from vimmune.openset.scorer import OpenSetScorer, pseudo_unknowns
+
+    out.mkdir(parents=True, exist_ok=True)
+    seed_everything(cfg.seed)
+    o = cfg.openset
+    model, bundle = load_lm(lm_dir / "lm.pt")
+    tok = Tokenizer(cfg)
+    tr = corpus_tracks(cfg, corpus, tok_dir)
+    classes, mu = bundle.classes, bundle.centroids
+    known = lambda ts: [t for t in ts if t.label in classes]  # noqa: E731
+    cal = known(tr["cal"])
+    sess = sorted({t.session for t in cal})
+    rng = np.random.default_rng(cfg.seed)
+    rng.shuffle(sess)
+    half = set(sess[: len(sess) // 2])
+    cal_a, cal_b = [t for t in cal if t.session in half], [t for t in cal if t.session not in half]
+    w = field_weights(tok.n_bins)
+    ctx, L = cfg.lm.ctx, o.score_len
+
+    wa = score_windows(model, cal_a, ctx, L, w)
+    da, _ = distance(wa.h, mu)
+    s_cal = SNRCalib.fit(wa.S, wa.snr, o.snr_bin_db, o.smooth_bandwidth_bins)
+    d_cal = SNRCalib.fit(da, wa.snr, o.snr_bin_db, o.smooth_bandwidth_bins)
+    bs = [burst_surprise(model, t, ctx, w) for t in cal_a]
+    b_cal = SNRCalib.fit(np.concatenate([b[1:] for b in bs]), np.concatenate([t.snr[1:] for t in cal_a]), o.snr_bin_db, o.smooth_bandwidth_bins)
+    b_cal_class = {}
+    for c in classes:
+        ix = [i for i, t in enumerate(cal_a) if t.label == c]
+        if ix:
+            b_cal_class[c] = SNRCalib.fit(np.concatenate([bs[i][1:] for i in ix]), np.concatenate([cal_a[i].snr[1:] for i in ix]),
+                                          o.snr_bin_db, o.smooth_bandwidth_bins)
+
+    # α on validation: known windows vs pseudo-unknown windows
+    val = known(tr["val"])
+    pu = pseudo_unknowns(val, max(20, len(val)), cfg.seed)
+    wk, wu = score_windows(model, val, ctx, L, w), score_windows(model, pu, ctx, L, w)
+    dk, du = distance(wk.h, mu)[0], distance(wu.h, mu)[0]
+    alpha, a_res = choose_alpha(s_cal.z(wk.S, wk.snr), d_cal.z(dk, wk.snr), s_cal.z(wu.S, wu.snr), d_cal.z(du, wu.snr), o.alpha_grid)
+
+    calib = OpenSetCalib(w.tolist(), s_cal, d_cal, b_cal, alpha, o.epsilon, [], 0.0, 0.0, L, ctx,
+                         alpha_auroc={str(k): v for k, v in a_res.items()}, b_cal_class=b_cal_class, ell_clip=o.ell_clip)
+    wb = score_windows(model, cal_b, ctx, L, w)
+    calib.cal_scores = calib.fuse(wb.S, wb.snr, distance(wb.h, mu)[0]).tolist()
+
+    # CUSUM: block-bootstrap per-burst ℓ of cal-B tracks per family; h for MTBFA ≥ target
+    sc = OpenSetScorer(model, classes, mu, calib)
+    series: dict[str, list[np.ndarray]] = {}
+    dts: dict[str, list[float]] = {}
+    for t in cal_b:
+        series.setdefault(t.label, []).append(sc.burst_ell(t)[1:])
+        dts.setdefault(t.label, []).append((t.toa[-1] - t.toa[0]) / max(1, len(t) - 1))  # mean burst interval
+    dt = {f: float(np.median(v)) for f, v in dts.items()}
+    pu_shift = float(np.median([sc.burst_ell(t)[1:].mean() for t in pu[:20]]))  # typical unknown drift
+    t0 = time.time()
+    calib.kappa, calib.h, calib.mtbfa_h, h_table = choose_kappa_h(series, dt, o.cusum_kappa_grid, o.cusum_h_max, o.cusum_target_h,
+                                                                  o.cusum_sim_streams, o.cusum_sim_hours, o.cusum_block, cfg.seed, o.cusum_ref_shift)
+    t_cusum = time.time() - t0
+
+    # held-out known test: empirical false-unknown rate (should be ≤ ε)
+    test = sc.score(known(tr["test"]))
+    test_pu = sc.score(pseudo_unknowns(known(tr["test"]), 40, cfg.seed + 1))
+    from vimmune.openset.calib import auroc
+
+    metrics = {"alpha": alpha, "alpha_auroc": a_res, "n_cal_a_windows": len(wa.S), "n_cal_b_windows": len(wb.S),
+               "epsilon": o.epsilon, "false_unknown_rate_test": float(test.unknown.mean()), "n_test_windows": len(test),
+               "pseudo_unknown_auroc_test": auroc(test.U.to_numpy(), test_pu.U.to_numpy()),
+               "pseudo_unknown_tpr_test": float(test_pu.unknown.mean()),
+               "cusum": {"kappa": calib.kappa, "h": calib.h, "mtbfa_hours": calib.mtbfa_h, "h_by_kappa": h_table,
+                         "pseudo_unknown_mean_ell": pu_shift, "design_shift": o.cusum_ref_shift,
+                         "method": "block-bootstrap simulation of known-class ℓ + log-linear tail extrapolation",
+                         "mean_burst_interval_s": dt, "sim_seconds": t_cusum,
+                         "mean_ell_by_family": {f: float(np.mean(np.concatenate(v))) for f, v in series.items()}}}
+    write_json(out / "calib.json", calib.to_dict())
+    write_json(out / "metrics.json", metrics)
+    test.to_parquet(out / "test_windows.parquet")
+    return metrics
+
+
+def load_scorer(lm_path: Path, calib_path: Path):
+    from vimmune.openset.calib import OpenSetCalib
+    from vimmune.openset.scorer import OpenSetScorer
+
+    model, b = load_lm(lm_path)
+    return OpenSetScorer(model, b.classes, b.centroids, OpenSetCalib.from_dict(read_json(calib_path)))

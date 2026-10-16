@@ -60,3 +60,21 @@ Every place where the implementation departs from, or fills a gap in, the build 
 - **Classifier fine-tune.** Uses CE plus the LM loss. With CE alone the field heads drift and the surprise score would no longer be the pretrained model's.
 - **Pretraining corpus.** Fast-BDW corpus tracks are grouped by the simulator `source_id`, an idealized association. Live scenes use the real association pipeline (§2.3).
 - **Demo profile.** d = 128, 4 layers, 4 heads, ctx = 64, 900 steps, batch 32. Full profile: d = 256, 6 layers, 8 heads, ctx = 256 (5.58 M parameters).
+
+## Open-set decision (§2.5)
+- **Calibration splits.** The corpus split is 60/10/20/10 (train/val/cal/test, by session). Calibration is halved by session: cal-A fits μ(s)/σ(s), cal-B supplies the conformal scores, so the two sets do not overlap.
+- **SNR smoothing.** Counts-weighted local-linear regression (tricube kernel, bandwidth 2 bins) across the 2 dB bins (LOWESS-style). There is no extrapolation beyond the observed SNR range. σ is floored at 0.5 × the overall std so sparse bins cannot yield tiny σ.
+- **α selection needs unknowns, but the hidden families must stay unseen.** Validation unknowns are therefore *pseudo-unknowns*: known validation tracks recombined, keeping ΔTOA/FC/times from family A and BW/PW/SNR/waveform from family B ≠ A. α maximizes validation AUROC of known vs pseudo-unknown. In the demo profile α comes out at 0, so the fused score is z_d only; the z_S-only row of `table3.md` shows what surprise alone gives.
+- **CUSUM ℓ_n.** Each burst's surprise is standardized with the per-burst SNR calibration of the track's *nearest known class*, taken causally from the latest scored window; the global calibration applies before the first window. With one global calibration, the WiFi-like family's intrinsic randomness (mean ℓ ≈ 1.6) forced κ ≥ 3 and hid real unknowns. ℓ is clipped at ±10, so a single outlier burst (e.g. a split burst) cannot alarm alone.
+- **CUSUM κ and h** are chosen on known data:
+  - For each κ ∈ {0.5, 1, 2, 3}, h is the smallest value whose mean time between false alarms is ≥ 1 h for *every* known family. This uses block-bootstrap simulation (blocks of 32 cal-B bursts, vectorized over 100 streams and all thresholds) of each family for `cusum_sim_hours` at that family's mean burst interval.
+  - Because 1 h of P4 is about 1.4 M bursts, the alarm rate at large h comes from a log-linear fit of log(rate) vs h on grid points with ≥ 10 alarms (CUSUM tails decay exponentially), unless the Poisson 95 % upper bound already certifies the target.
+  - Among feasible κ, the pair minimizing the expected delay h/(δ − κ) for a design shift δ = 3σ (`cusum_ref_shift`) wins. The pseudo-unknowns' drift (≈1σ) proved too mild a reference: real hidden families drift by 3–5σ.
+
+## Grammar induction (§2.6)
+- **DBSCAN eps.** Starts at the spec's 0.5·BW and is halved (≤ 4 times) while any cluster spans more than 2·BW. P2's 24 × 2 MHz plan cannot be non-overlapping in 30.72 MHz (1.2 MHz spacing), so FC-noise tails chain every channel into one cluster at eps = 1 MHz.
+- **Frame-period folding** uses three zoom stages (201 points each over ±2 %, then ±2 grid steps), because 60 s of 8 ms frames needs period resolution better than 1/7500. Among candidates within 0.02 of the best Rayleigh R, the largest period wins, since submultiples fold equally well. A period is reported only if R ≥ 0.3.
+- **Transitions.** Only consecutive bursts less than 1.5 frames apart enter the transition matrix, so missed bursts do not add entropy. If more than 80 % of transitions are self-transitions, the hop type is "fixed" (covers P4/P5/P6 and P4's occasional re-tunes). Additive smoothing is 0.1.
+- **Adaptive avoidance.** Occupancy is the union of background-burst intervals overlapping each channel band over [t_end − max(10 s, track duration), t_end]. Background means every burst not in the flagged track.
+- **Link pairing.** Cross-correlation is computed as the histogram of nearest-neighbour burst lags within ±50 ms (50 µs bins). A partner needs ≥ 50 % of the flagged bursts in the peak (two-bin) lag.
+- **Card evaluation.** Jaccard compares against the channels the source actually used in the simulator truth (a P6 link uses one channel of its family plan).
